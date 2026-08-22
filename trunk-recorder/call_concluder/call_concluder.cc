@@ -506,6 +506,14 @@ Call_Data_t Call_Concluder::create_base_filename(Call *call, Call_Data_t call_in
   const std::int64_t start_ms = call->get_start_time_ms();
   time_t work_start_time = static_cast<time_t>(start_ms / 1000);
   std::string capture_dir = call->get_capture_dir();
+
+  // Route calls without a talkgroup entry to a separate subdirectory.
+  if (sys && !sys->find_talkgroup(call->get_talkgroup())) {
+    capture_dir = capture_dir + "/unknown";
+    BOOST_LOG_TRIVIAL(info) << "Unknown TG " << call->get_talkgroup()
+                            << " routed to unknown capture directory: "
+                            << capture_dir;
+  }
   std::string base_filename;
 
   // Determine which format to use:  system-level overrides instance-level.
@@ -521,7 +529,7 @@ Call_Data_t Call_Concluder::create_base_filename(Call *call, Call_Data_t call_in
   tm *ltm = localtime(&work_start_time);
 
   boost::filesystem::path base_path =
-      boost::filesystem::path(call->get_capture_dir()) /
+      boost::filesystem::path(capture_dir) /
       call->get_short_name() /
       boost::lexical_cast<std::string>(1900 + ltm->tm_year) /
       boost::lexical_cast<std::string>(1 + ltm->tm_mon) /
@@ -788,6 +796,119 @@ void Call_Concluder::conclude_call(Call *call, System *sys, Config config) {
   }
 
 
+  auto refresh_talkgroup_metadata = [&](Call_Data_t &info, unsigned long tgid) {
+    info.talkgroup = tgid;
+
+    if (Talkgroup *tg = sys->find_talkgroup(tgid)) {
+      info.talkgroup_tag          = tg->tag;
+      info.talkgroup_alpha_tag    = tg->alpha_tag;
+      info.talkgroup_description  = tg->description;
+      info.talkgroup_group        = tg->group;
+    } else {
+      info.talkgroup_tag.clear();
+      info.talkgroup_alpha_tag.clear();
+      info.talkgroup_description.clear();
+      info.talkgroup_group.clear();
+    }
+
+    info.talkgroup_display = std::to_string(tgid);
+  };
+
+  auto suffix_filename = [](const std::string &filename, const std::string &suffix) {
+    boost::filesystem::path p(filename);
+    std::string replacement = p.stem().string() + suffix + p.extension().string();
+    p.replace_filename(replacement);
+    return p.string();
+  };
+
+  auto make_patch_source_copy = [&](const Transmission &tx, const Call_Data_t &info, unsigned long patched_tgid, int tx_index, Transmission &out_tx) {
+    boost::filesystem::path src_path(tx.filename);
+    boost::filesystem::path dst_path(info.filename);
+
+    dst_path.replace_extension("");
+    dst_path += "-patchsrc_" + std::to_string(patched_tgid) + "_" + std::to_string(tx_index) + src_path.extension().string();
+
+    std::ifstream src(tx.filename, std::ios::binary);
+    std::ofstream dst(dst_path.string(), std::ios::binary);
+
+    if (!src || !dst) {
+      BOOST_LOG_TRIVIAL(error) << loghdr << "Unable to copy patch duplicate transmission file from "
+                               << tx.filename << " to " << dst_path.string();
+      return false;
+    }
+
+    dst << src.rdbuf();
+
+    out_tx = tx;
+    out_tx.talkgroup = patched_tgid;
+    out_tx.filename = dst_path.string();
+    return true;
+  };
+
+  auto enqueue_patch_duplicates = [&](const Call_Data_t &base_info) {
+    if (base_info.patched_talkgroups.size() <= 1) {
+      return;
+    }
+
+    BOOST_FOREACH (auto &patched_tgid, base_info.patched_talkgroups) {
+      if (patched_tgid == (unsigned long)base_info.talkgroup) {
+        continue;
+      }
+
+      Call_Data_t patched_info = base_info;
+      refresh_talkgroup_metadata(patched_info, patched_tgid);
+      patched_info = create_base_filename(call, patched_info, sys, config);
+
+      // Ensure duplicate outputs remain unique when filenameFormat omits the TGID.
+      if (patched_info.filename == base_info.filename) {
+        patched_info.filename = suffix_filename(patched_info.filename, "-patch_" + std::to_string(patched_tgid));
+      }
+      if (patched_info.status_filename == base_info.status_filename) {
+        patched_info.status_filename = suffix_filename(patched_info.status_filename, "-patch_" + std::to_string(patched_tgid));
+      }
+      if (patched_info.converted == base_info.converted) {
+        patched_info.converted = suffix_filename(patched_info.converted, "-patch_" + std::to_string(patched_tgid));
+      }
+
+      std::vector<Transmission> copied_transmissions;
+      int tx_index = 0;
+      bool copy_failed = false;
+
+      for (auto tx : base_info.transmission_list) {
+        Transmission copied_tx;
+
+        if (!make_patch_source_copy(tx, patched_info, patched_tgid, tx_index, copied_tx)) {
+          copy_failed = true;
+          break;
+        }
+
+        copied_transmissions.push_back(copied_tx);
+        tx_index++;
+      }
+
+      if (copy_failed || copied_transmissions.size() != base_info.transmission_list.size()) {
+        for (auto &tx : copied_transmissions) {
+          if (checkIfFile(tx.filename)) {
+            std::remove(tx.filename.c_str());
+          }
+        }
+
+        BOOST_LOG_TRIVIAL(error) << loghdr << "Skipping patch duplicate for TGID " << patched_tgid
+                                 << " because one or more source transmissions could not be copied.";
+        continue;
+      }
+
+      patched_info.transmission_list = copied_transmissions;
+      patched_info.transmission_archive = false;
+
+      BOOST_LOG_TRIVIAL(info) << loghdr << "Creating duplicate recording for patched talkgroup " << patched_tgid;
+      call_data_workers.push_back(std::async(std::launch::async, upload_call_worker, patched_info));
+    }
+  };
+
+  if (config.patch_group_duplicate_output) {
+    enqueue_patch_duplicates(call_info);
+  }
   call_data_workers.push_back(std::async(std::launch::async, upload_call_worker, call_info));
 }
 

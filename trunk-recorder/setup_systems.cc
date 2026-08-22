@@ -136,37 +136,55 @@ bool setup_systems(Config &config, gr::top_block_sptr &tb, std::vector<Source *>
       double control_channel_freq = system->get_current_control_channel();
       BOOST_LOG_TRIVIAL(info) << "[" << system->get_short_name() << "]\tStarted with Control Channel: " << format_freq(control_channel_freq);
 
-      for (vector<Source *>::iterator src_it = sources.begin(); src_it != sources.end(); src_it++) {
-        source = *src_it;
+        // Restrict initial control-channel selection to configured system sources.
+        std::vector<Source *> allowed_sources;
+        std::vector<int> source_nums = system->get_source_nums();
 
-        if ((source->get_min_hz() <= control_channel_freq) &&
-            (source->get_max_hz() >= control_channel_freq)) {
-          // The source can cover the System's control channel
-          system_added = true;
-          system->set_source(source);
+        if (source_nums.size() > 0) {
+          for (std::vector<int>::iterator num_it = source_nums.begin(); num_it != source_nums.end(); num_it++) {
+            int source_num = *num_it;
 
-          if (system->get_system_type() == "smartnet") {
-            system->smartnet_trunking = smartnet_impl::make(control_channel_freq,
-                                                               source->get_center(),
-                                                               source->get_rate(),
-                                                               system->get_msg_queue(),
-                                                               system->get_sys_num());
-            tb->connect(source->get_src_block(), 0, system->smartnet_trunking, 0);
+            if ((source_num >= 0) && (source_num < (int)sources.size())) {
+              allowed_sources.push_back(sources[source_num]);
+            } else {
+              BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "]\tConfigured source index out of range during setup: " << source_num;
+            }
           }
-
-          if (system->get_system_type() == "p25") {
-            system->p25_trunking = make_p25_trunking(control_channel_freq,
-                                                     source->get_center(),
-                                                     source->get_rate(),
-                                                     system->get_msg_queue(),
-                                                     system->get_qpsk_mod(),
-                                                     system->get_sys_num());
-            tb->connect(source->get_src_block(), 0, system->p25_trunking, 0);
-          }
-
-          break;
+        } else {
+          allowed_sources = sources;
         }
-      }
+
+        for (vector<Source *>::iterator src_it = allowed_sources.begin(); src_it != allowed_sources.end(); src_it++) {
+          source = *src_it;
+
+          if ((source->get_min_hz() <= control_channel_freq) &&
+              (source->get_max_hz() >= control_channel_freq)) {
+            // The source can cover the System's control channel
+            system_added = true;
+            system->set_source(source);
+
+            if (system->get_system_type() == "smartnet") {
+              system->smartnet_trunking = smartnet_impl::make(control_channel_freq,
+                                                                 source->get_center(),
+                                                                 source->get_rate(),
+                                                                 system->get_msg_queue(),
+                                                                 system->get_sys_num());
+              tb->connect(source->get_src_block(), 0, system->smartnet_trunking, 0);
+            }
+
+            if (system->get_system_type() == "p25") {
+              system->p25_trunking = make_p25_trunking(control_channel_freq,
+                                                       source->get_center(),
+                                                       source->get_rate(),
+                                                       system->get_msg_queue(),
+                                                       system->get_qpsk_mod(),
+                                                       system->get_sys_num());
+              tb->connect(source->get_src_block(), 0, system->p25_trunking, 0);
+            }
+
+            break;
+          }
+        }
       if (!system_added) {
         BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "]\t Unable to find a source for this System! Control Channel Freq: " << format_freq(control_channel_freq);
         return false;

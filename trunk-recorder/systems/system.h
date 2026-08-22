@@ -9,6 +9,7 @@
 //#include "../source.h"
 #include "parser.h"
 #include <iomanip>
+#include <vector>
 
 #ifdef __GNUC__
 #pragma GCC diagnostic push
@@ -116,6 +117,8 @@ public:
   virtual std::string get_unit_tags_file() = 0;
   virtual Source *get_source() = 0;
   virtual void set_source(Source *) = 0;
+  virtual void set_source_nums(std::vector<int>) = 0;
+  virtual std::vector<int> get_source_nums() = 0;
   virtual Talkgroup *find_talkgroup(long tg) = 0;
   virtual Talkgroup *find_talkgroup_by_freq(double freq) = 0;
   virtual std::string find_unit_tag(long unitID) = 0;

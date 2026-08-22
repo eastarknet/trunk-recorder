@@ -245,6 +245,17 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
     config.debug_recorder_port = data.value("debugRecorderPort", 1234);
 
     BOOST_LOG_TRIVIAL(info) << "\n-------------------------------------\nSYSTEMS\n-------------------------------------\n";
+  config.record_deny_talkgroups.clear();
+  if (pt.get_child_optional("recordDenyTalkgroups")) {
+    BOOST_FOREACH (boost::property_tree::ptree::value_type &record_deny_talkgroup, pt.get_child("recordDenyTalkgroups")) {
+      config.record_deny_talkgroups.push_back(record_deny_talkgroup.second.get_value<unsigned long>());
+    }
+  }
+  BOOST_LOG_TRIVIAL(info) << "Record Deny Talkgroups: " << config.record_deny_talkgroups.size();
+
+  config.patch_group_duplicate_output = pt.get<bool>("patchGroupDuplicateOutput", false);
+  BOOST_LOG_TRIVIAL(info) << "Patch Group Duplicate Output: " << config.patch_group_duplicate_output;
+
 
     for (json element : data["systems"]) {
       bool system_enabled = element.value("enabled", true);
@@ -301,9 +312,22 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
           for (unsigned int i = 0; i < control_channels.size(); i++) {
             BOOST_LOG_TRIVIAL(info) << "  " << format_freq(control_channels[i]);
           }
+          if (element.contains("sources")) {
+            std::vector<int> source_nums = element["sources"];
+            system->set_source_nums(source_nums);
+
+            std::stringstream source_nums_log;
+            for (unsigned int i = 0; i < source_nums.size(); i++) {
+              if (i > 0) {
+                source_nums_log << ",";
+              }
+              source_nums_log << source_nums[i];
+            }
+            BOOST_LOG_TRIVIAL(info) << "Allowed Sources: [" << source_nums_log.str() << "]";
+          }
+
           system->set_talkgroups_file(element.value("talkgroupsFile", ""));
           BOOST_LOG_TRIVIAL(info) << "Talkgroups File: " << system->get_talkgroups_file();
-
           bool custom_freq_table_file_exists = element.contains("customFrequencyTableFile");
           if (custom_freq_table_file_exists)
           {

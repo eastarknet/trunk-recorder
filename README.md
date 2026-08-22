@@ -1,5 +1,12 @@
 ![Trunk Recorder](./docs/media/trunk-recorder-header.png)
 ---
+
+> **Fork notice:** This repository contains additional source-selection and
+> recording behaviors beyond upstream Trunk Recorder on the `customizations`
+> branch. See [FORK_CHANGES.md](FORK_CHANGES.md) for the feature list,
+> configuration additions, implementation notes, and guidance for porting the
+> changes to another Trunk Recorder version.
+
 [![Discord](./docs/media/discord.jpg)](https://discord.gg/btJAhESnks) &nbsp;&nbsp;
 
 
