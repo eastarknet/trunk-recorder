@@ -405,6 +405,11 @@ endforeach()
 
 add_executable(trunk-recorder trunk-recorder/main.cc) # ${trunk_recorder_sources})
 
+enable_testing()
+add_executable(capacity_plus_parser_test tests/capacity_plus_parser_test.cc)
+target_include_directories(capacity_plus_parser_test PRIVATE trunk-recorder)
+add_test(NAME capacity_plus_parser_test COMMAND capacity_plus_parser_test)
+
 target_link_libraries(trunk-recorder git trunk_recorder_library gnuradio-op25_repeater   ${CMAKE_DL_LIBS} ssl crypto ${CURL_LIBRARIES} ${Boost_LIBRARIES} ${GNURADIO_PMT_LIBRARIES} ${GNURADIO_RUNTIME_LIBRARIES} ${GNURADIO_FILTER_LIBRARIES} ${GNURADIO_DIGITAL_LIBRARIES} ${GNURADIO_ANALOG_LIBRARIES} ${GNURADIO_AUDIO_LIBRARIES} ${GNURADIO_UHD_LIBRARIES} ${UHD_LIBRARIES} ${GNURADIO_BLOCKS_LIBRARIES} ${GNURADIO_OSMOSDR_LIBRARIES} ) # gRPC::grpc++_reflection protobuf::libprotobuf)
 
 #target_link_libraries(trunk-recorder PRIVATE nlohmann_json::nlohmann_json )

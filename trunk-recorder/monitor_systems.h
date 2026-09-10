@@ -16,4 +16,5 @@
 
 int monitor_messages(Config &config, gr::top_block_sptr &tb, std::vector<Source *> &sources, std::vector<System *> &systems, std::vector<Call *> &calls);
 void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &sources);
+bool retune_system_to_frequency(System *sys, double frequency, gr::top_block_sptr &tb, std::vector<Source *> &sources);
 #endif

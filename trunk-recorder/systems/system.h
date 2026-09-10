@@ -176,6 +176,7 @@ public:
   virtual void add_control_channel(double channel) = 0;
   virtual double get_next_control_channel() = 0;
   virtual double get_current_control_channel() = 0;
+  virtual bool select_control_channel(double channel) = 0;
   virtual int channel_count() = 0;
   virtual int get_message_count() = 0;
   virtual void set_message_count(int count) = 0;
@@ -258,8 +259,12 @@ public:
   // already in `lcn_freq_table`, or 0 if none are left.
   virtual double next_unmapped_channel() = 0;
 
-  // Tracks the currently-announced rest channel LCN for Capacity Plus
-  // systems. -1 means "not yet seen".
+  // Tracks the currently-announced rest logical slot number (LSN) for
+  // Capacity Plus systems. -1 means "not yet seen".
+  virtual void set_dmr_rest_lsn(int lsn) = 0;
+  virtual int get_dmr_rest_lsn() = 0;
+
+  // Legacy compatibility aliases. The stored value is an LSN, not an LCN.
   virtual void set_dmr_rest_lcn(int lcn) = 0;
   virtual int get_dmr_rest_lcn() = 0;
 

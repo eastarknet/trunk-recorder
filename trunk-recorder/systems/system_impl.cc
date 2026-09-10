@@ -206,7 +206,7 @@ System_impl::System_impl(int sys_num) {
   retune_attempts = 0;
   message_count = 0;
   decode_rate = 0;
-  dmr_rest_lcn = -1;
+  dmr_rest_lsn = -1;
   dmr_variant = "";
   msg_queue = gr::msg_queue::make(100);
   audio_postprocess_enabled = false;
@@ -635,6 +635,17 @@ double System_impl::get_next_control_channel() {
   return this->control_channels[current_control_channel];
 }
 
+bool System_impl::select_control_channel(double channel) {
+  auto it = std::find(control_channels.begin(), control_channels.end(), channel);
+  if (it == control_channels.end()) {
+    control_channels.push_back(channel);
+    current_control_channel = control_channels.size() - 1;
+  } else {
+    current_control_channel = std::distance(control_channels.begin(), it);
+  }
+  return true;
+}
+
 void System_impl::set_conversation_mode(bool mode) {
   this->conversation_mode = mode;
 }
@@ -952,12 +963,20 @@ double System_impl::next_unmapped_channel() {
   return 0;
 }
 
+void System_impl::set_dmr_rest_lsn(int lsn) {
+  dmr_rest_lsn = lsn;
+}
+
+int System_impl::get_dmr_rest_lsn() {
+  return dmr_rest_lsn;
+}
+
 void System_impl::set_dmr_rest_lcn(int lcn) {
-  dmr_rest_lcn = lcn;
+  set_dmr_rest_lsn(lcn);
 }
 
 int System_impl::get_dmr_rest_lcn() {
-  return dmr_rest_lcn;
+  return get_dmr_rest_lsn();
 }
 
 void System_impl::set_dmr_variant(const std::string &v) {

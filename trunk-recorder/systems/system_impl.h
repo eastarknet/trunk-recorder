@@ -130,7 +130,7 @@ public:
 
   // Trunked-DMR per-system state
   std::map<int, double> lcn_freq_table;
-  int dmr_rest_lcn;
+  int dmr_rest_lsn;
   std::string dmr_variant;
 
   std::map<unsigned long, std::map<unsigned long, std::time_t>> talkgroup_patches;
@@ -268,6 +268,7 @@ public:
   void add_control_channel(double channel) override;
   double get_next_control_channel() override;
   double get_current_control_channel() override;
+  bool select_control_channel(double channel) override;
   int channel_count() override;
   void add_channel(double channel) override;
   void add_conventional_recorder(analog_recorder_sptr rec) override;
@@ -337,6 +338,8 @@ public:
   double get_lcn_freq(int lcn) override;
   size_t lcn_count() override;
   double next_unmapped_channel() override;
+  void set_dmr_rest_lsn(int lsn) override;
+  int get_dmr_rest_lsn() override;
   void set_dmr_rest_lcn(int lcn) override;
   int get_dmr_rest_lcn() override;
   void set_dmr_variant(const std::string &v) override;

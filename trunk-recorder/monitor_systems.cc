@@ -1,6 +1,7 @@
 #include "monitor_systems.h"
 #include <algorithm>
 #include "recorders/p25_recorder.h"
+#include "systems/capacity_plus_parser.h"
 #include "systems/dmr_parser.h"
 #include <chrono>
 #include <cmath>
@@ -725,6 +726,12 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
       retune_system(sys,tb,sources);
       break;
 
+    case CAPACITY_PLUS_REST_CHANNEL:
+      if (capacity_plus_rest_retune_needed(sys->get_current_control_channel(), message.freq)) {
+        retune_system_to_frequency(sys, message.freq, tb, sources);
+      }
+      break;
+
     case UNKNOWN:
       break;
     }
@@ -733,9 +740,14 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
 
 void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &sources) {
   System_impl *system = (System_impl *)sys;
+  double control_channel_freq = system->get_next_control_channel();
+  retune_system_to_frequency(sys, control_channel_freq, tb, sources);
+}
+
+bool retune_system_to_frequency(System *sys, double control_channel_freq, gr::top_block_sptr &tb, std::vector<Source *> &sources) {
+  System_impl *system = (System_impl *)sys;
   bool source_found = false;
   Source *current_source = system->get_source();
-  double control_channel_freq = system->get_next_control_channel();
 
   std::vector<Source *> allowed_sources;
   if (system->get_source_nums().empty()) {
@@ -755,9 +767,9 @@ void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &s
   const bool current_source_allowed =
       std::find(allowed_sources.begin(), allowed_sources.end(), current_source) != allowed_sources.end();
 
-  BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "] Retuning to Control Channel: " << format_freq(control_channel_freq);
+  BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "] Retuning trunking decoder to: " << format_freq(control_channel_freq);
 
-  if (current_source_allowed &&
+  if (current_source && current_source_allowed &&
       (current_source->get_min_hz() <= control_channel_freq) &&
       (current_source->get_max_hz() >= control_channel_freq)) {
     source_found = true;
@@ -828,12 +840,14 @@ void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &s
   if (!source_found) {
     BOOST_LOG_TRIVIAL(error) << "\t - Unable to retune System control channel, freq not covered by any allowed source.";
   } else {
+    system->select_control_channel(control_channel_freq);
     if ((system->get_source()->get_autotune_source()) && (system->get_system_type() == "p25")) {
       // If control channel source has autotune enabled, perform adjustments after retune completes
       // Don't store measurements since the control channel recorder just started
       autotune_control_channel(system, false);
     }
   }
+  return source_found;
 }
 
 void check_message_count(float timeDiff, Config &config, gr::top_block_sptr &tb, std::vector<Source *> &sources, std::vector<System *> &systems) {

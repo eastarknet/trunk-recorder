@@ -13,7 +13,7 @@ class System;
 // CSBK, MBC, VLC, TLC, ELC, PI) into trunk-recorder TrunkMessages.
 //
 // It is *stateless across messages* — anything that has to persist (current
-// CC frequency, rest-channel LCN, observed variant) lives on System. The
+// CC frequency, rest-channel LSN, observed variant) lives on System. The
 // parser only translates one wire-format event at a time.
 //
 // Variants understood today:

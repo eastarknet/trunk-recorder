@@ -23,6 +23,7 @@ enum MessageType {
   INVALID_CC_MESSAGE = 16,
   TDULC = 17,
   CALL_ALERT = 18,
+  CAPACITY_PLUS_REST_CHANNEL = 19,
   UNKNOWN = 99
 };
 

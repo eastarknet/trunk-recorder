@@ -1,6 +1,7 @@
 #include "dmr_parser.h"
 
 #include "../formatter.h"
+#include "capacity_plus_parser.h"
 #include "system.h"
 #include <boost/log/trivial.hpp>
 #include <ctype.h>
@@ -162,7 +163,7 @@ std::vector<TrunkMessage> DmrParser::parse_message(gr::message::sptr msg, System
 // ----------------------------------------------------------------------------
 // CACH SLC (Slow Link Control) — one of the strongest variant fingerprints
 // we have. SLCO=9 / 10 mark a Connect Plus voice/control channel; SLCO=15
-// announces the current Capacity Plus rest LCN.
+// announces the current Capacity Plus rest LSN.
 //
 // Wire layout (4 bytes):
 //   byte[0] = SLCO
@@ -201,20 +202,40 @@ std::vector<TrunkMessage> DmrParser::decode_cach_slc(const uint8_t *slc, int rxi
   }
 
   if (slco == 15) {
-    // Capacity Plus rest channel announcement: byte[1] = current rest LCN.
-    int rest_lcn = slc[1];
+    // OP25 stores the Capacity Plus rest LSN in the low five bits of d1.
+    int rest_lsn = capacity_plus_rest_lsn_from_op25_slc(slc);
+    CapacityPlusChannel rest_channel;
     TrunkMessage m = blank_message(system);
-    m.message_type = STATUS;
+    m.message_type = CAPACITY_PLUS_REST_CHANNEL;
     m.opcode = 15;
     std::ostringstream os;
-    os << "CACH SLC CapPlus rest_lcn=" << rest_lcn;
+    os << "Capacity Plus CACH SLC rest LSN=" << rest_lsn;
+    if (capacity_plus_lsn_to_channel(rest_lsn, rest_channel)) {
+      m.tdma_slot = rest_channel.tdma_slot;
+      m.freq = system ? system->get_lcn_freq(rest_channel.lcn) : 0;
+      os << " LCN=" << rest_channel.lcn << " slot=" << rest_channel.tdma_slot
+         << " freq=" << format_freq(m.freq);
+    }
     m.meta = os.str();
     BOOST_LOG_TRIVIAL(debug) << "[" << (system ? system->get_short_name() : "dmr") << "] " << os.str();
-    if (system) {
-      system->set_dmr_variant("capacity_plus");
-      system->set_dmr_rest_lcn(rest_lcn);
+    const int previous_rest_lsn = system ? system->get_dmr_rest_lsn() : -1;
+    if (system) system->set_dmr_variant("capacity_plus");
+    if (!capacity_plus_lsn_to_channel(rest_lsn, rest_channel)) {
+      if (previous_rest_lsn != rest_lsn) {
+        BOOST_LOG_TRIVIAL(warning) << "[" << (system ? system->get_short_name() : "dmr")
+                                   << "] ignoring invalid Capacity Plus rest LSN " << rest_lsn;
+      }
+    } else if (m.freq == 0) {
+      if (system) system->set_dmr_rest_lsn(rest_lsn);
+      if (previous_rest_lsn != rest_lsn) {
+        BOOST_LOG_TRIVIAL(warning) << "[" << (system ? system->get_short_name() : "dmr")
+                                   << "] Capacity Plus rest LCN " << rest_channel.lcn
+                                   << " is not explicitly mapped; remaining on current frequency";
+      }
+    } else {
+      if (system) system->set_dmr_rest_lsn(rest_lsn);
+      out.push_back(m);
     }
-    out.push_back(m);
     return out;
   }
 
@@ -290,32 +311,111 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
     }
 
     // ---- MOTOTRBO Capacity Plus (FID=0x10) -------------------------------
-    case 0x3B10: {  // Sys/Sites/TS — carries rest LCN announcement
+    case 0x3B10: {  // Capacity Plus Neighbor Report — carries rest LSN announcement
       uint8_t rest = d[0] & 0x1F;
       uint8_t bcn  = (d[1] >> 7) & 0x1;
       uint8_t site = (d[1] >> 3) & 0xF;
       TrunkMessage m = blank_message(system);
-      m.message_type = STATUS;
+      m.message_type = CAPACITY_PLUS_REST_CHANNEL;
       m.opcode = key;
       m.sys_site_id = site;
       std::ostringstream os;
-      os << "CapPlus Sys/Sites rest_lcn=" << (int)rest
+      CapacityPlusChannel rest_channel;
+      os << "Capacity Plus Neighbor Report rest LSN=" << (int)rest
          << " beacon=" << (int)bcn << " site=" << (int)site;
+      if (capacity_plus_lsn_to_channel(rest, rest_channel)) {
+        m.tdma_slot = rest_channel.tdma_slot;
+        m.freq = system ? system->get_lcn_freq(rest_channel.lcn) : 0;
+        os << " LCN=" << rest_channel.lcn << " slot=" << rest_channel.tdma_slot
+           << " freq=" << format_freq(m.freq);
+      }
       m.meta = os.str();
       BOOST_LOG_TRIVIAL(debug) << "[" << short_name << "] " << os.str();
-      if (system) {
-        system->set_dmr_variant("capacity_plus");
-        system->set_dmr_rest_lcn(rest);
+      const int previous_rest_lsn = system ? system->get_dmr_rest_lsn() : -1;
+      if (system) system->set_dmr_variant("capacity_plus");
+      if (!capacity_plus_lsn_to_channel(rest, rest_channel)) {
+        if (previous_rest_lsn != rest) {
+          BOOST_LOG_TRIVIAL(warning) << "[" << short_name
+                                     << "] ignoring invalid Capacity Plus rest LSN " << (int)rest;
+        }
+      } else if (m.freq == 0) {
+        if (system) system->set_dmr_rest_lsn(rest);
+        if (previous_rest_lsn != rest) {
+          BOOST_LOG_TRIVIAL(warning) << "[" << short_name << "] Capacity Plus rest LCN "
+                                     << rest_channel.lcn
+                                     << " is not explicitly mapped; remaining on current frequency";
+        }
+      } else {
+        if (system) system->set_dmr_rest_lsn(rest);
+        out.push_back(m);
       }
-      out.push_back(m);
       return out;
     }
     case 0x3D10:  // Preamble
-    case 0x3E10:  // Site Status
       BOOST_LOG_TRIVIAL(debug) << "[" << short_name << "] CapPlus op=0x"
                                << std::hex << (int)csbko
                                << " data=" << hex_dump(d, 8);
       return out;
+    case 0x3E10: {  // Site Status
+      const CapacityPlusSiteStatus status = decode_capacity_plus_site_status(d, 8);
+      if (system) system->set_dmr_variant("capacity_plus");
+
+      for (const CapacityPlusVoiceAssignment &assignment : status.voice_assignments) {
+        const double freq = system ? system->get_lcn_freq(assignment.channel.lcn) : 0;
+        if (freq == 0) {
+          BOOST_LOG_TRIVIAL(warning) << "[" << short_name
+                                     << "] dropping Capacity Plus Site Status grant: LSN "
+                                     << assignment.channel.lsn << " / LCN "
+                                     << assignment.channel.lcn << " is not explicitly mapped";
+          continue;
+        }
+        TrunkMessage grant = blank_message(system);
+        grant.message_type = GRANT;
+        grant.opcode = key;
+        grant.talkgroup = assignment.talkgroup;
+        grant.tdma_slot = assignment.channel.tdma_slot;
+        grant.freq = freq;
+        std::ostringstream os;
+        os << "Capacity Plus Site Status TG=" << (int)assignment.talkgroup
+           << " LSN=" << assignment.channel.lsn
+           << " LCN=" << assignment.channel.lcn
+           << " slot=" << assignment.channel.tdma_slot
+           << " freq=" << format_freq(freq);
+        grant.meta = os.str();
+        BOOST_LOG_TRIVIAL(debug) << "[" << short_name << "] " << grant.meta;
+        out.push_back(grant);
+      }
+
+      CapacityPlusChannel rest_channel;
+      const int previous_rest_lsn = system ? system->get_dmr_rest_lsn() : -1;
+      if (capacity_plus_lsn_to_channel(status.rest_lsn, rest_channel)) {
+        const double rest_freq = system ? system->get_lcn_freq(rest_channel.lcn) : 0;
+        if (system) system->set_dmr_rest_lsn(status.rest_lsn);
+        if (rest_freq != 0) {
+          TrunkMessage rest = blank_message(system);
+          rest.message_type = CAPACITY_PLUS_REST_CHANNEL;
+          rest.opcode = key;
+          rest.tdma_slot = rest_channel.tdma_slot;
+          rest.freq = rest_freq;
+          std::ostringstream os;
+          os << "Capacity Plus Site Status rest LSN=" << status.rest_lsn
+             << " LCN=" << rest_channel.lcn
+             << " slot=" << rest_channel.tdma_slot
+             << " freq=" << format_freq(rest_freq);
+          rest.meta = os.str();
+          out.push_back(rest); // Grants must be handled before this retune event.
+        } else if (previous_rest_lsn != status.rest_lsn) {
+          BOOST_LOG_TRIVIAL(warning) << "[" << short_name << "] Capacity Plus rest LCN "
+                                     << rest_channel.lcn
+                                     << " is not explicitly mapped; remaining on current frequency";
+        }
+      } else if (status.rest_lsn != 0 && previous_rest_lsn != status.rest_lsn) {
+        BOOST_LOG_TRIVIAL(warning) << "[" << short_name
+                                   << "] ignoring invalid Capacity Plus rest LSN "
+                                   << status.rest_lsn;
+      }
+      return out;
+    }
 
     // ---- MOTOTRBO Capacity Max extensions (FID=0x10) ---------------------
     case 0x1910: {  // Cap Max ALOHA — control-channel beacon

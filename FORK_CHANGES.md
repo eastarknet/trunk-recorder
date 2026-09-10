@@ -33,8 +33,31 @@ DMR support.
 The source-selection changes wrap, but do not replace, upstream DMR setup,
 retuning, recorder allocation, message handling, LCN mapping, or parsing. The
 upstream slot-aware DMR recorder lifecycle and dual-slot conventional DMR
-behavior are intentionally preserved. This phase adds no Capacity Plus protocol
-decoding.
+behavior are intentionally preserved.
+
+## Capacity Plus completion
+
+- Capacity Plus Site Status (`CSBKO 0x3E`, `FID 0x10`) first and single
+  segments now decode their ordered 8-bit voice talkgroup assignments into
+  normal routed grants. Continuation and last segments do not independently
+  emit grants.
+- Capacity Plus logical slot numbers are validated and converted to LCN plus
+  zero-based TDMA slot. Voice and rest-channel routing require an explicit LCN
+  mapping; Capacity Plus never claims an arbitrary frequency from `channels`.
+- Site Status, Neighbor Report, and CACH rest-LSN announcements update rest state and
+  move the DMR trunking decoder directly to the mapped RF frequency when it
+  changes. The shared targeted-retune path retains per-system source
+  restrictions, including when movement requires rebuilding the DMR flowgraph
+  on another allowed source.
+- The explicit `lcnTable` maps Capacity Plus LCNs to RF frequencies for grants
+  and rest movement, but does not populate the trunked system
+  `control_channels` search list. For a cold start, configure every possible
+  rest RF frequency in `control_channels` so Trunk Recorder can find the active
+  rest channel before decoding a rest-movement event. For EastArkNet SFCPS,
+  those frequencies will be `158797500`, `155175000`, and `154845000`.
+
+This protocol implementation has deterministic parser validation but has not
+yet been validated against the production SFCPS system.
 
 ## Upgrade warning
 
