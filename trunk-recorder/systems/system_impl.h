@@ -59,6 +59,7 @@ public:
   UnitTags *unit_tags;
   p25p2_lfsr *lfsr;
   Source *source;
+  std::vector<int> source_nums;
   std::string talkgroups_file;
   std::string channel_file;
   std::string unit_tags_file;
@@ -242,6 +243,8 @@ public:
   std::string get_unit_tags_file() override;
   Source *get_source() override;
   void set_source(Source *) override;
+  void set_source_nums(std::vector<int>) override;
+  std::vector<int> get_source_nums() override;
   Talkgroup *find_talkgroup(long tg) override;
   Talkgroup *find_talkgroup_by_freq(double freq) override;
   std::string find_unit_tag(long unitID) override;

@@ -244,6 +244,11 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
     config.debug_recorder_address = data.value("debugRecorderAddress", "127.0.0.1");
     config.debug_recorder_port = data.value("debugRecorderPort", 1234);
 
+    config.record_deny_talkgroups = data.value("recordDenyTalkgroups", std::vector<unsigned long>{});
+    BOOST_LOG_TRIVIAL(info) << "Record Deny Talkgroups: " << config.record_deny_talkgroups.size();
+    config.patch_group_duplicate_output = data.value("patchGroupDuplicateOutput", false);
+    BOOST_LOG_TRIVIAL(info) << "Patch Group Duplicate Output: " << config.patch_group_duplicate_output;
+
     BOOST_LOG_TRIVIAL(info) << "\n-------------------------------------\nSYSTEMS\n-------------------------------------\n";
 
     for (json element : data["systems"]) {
@@ -319,6 +324,23 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
           }
           for (unsigned int i = 0; i < control_channels.size(); i++) {
             BOOST_LOG_TRIVIAL(info) << "  " << format_freq(control_channels[i]);
+          }
+          if (element.contains("sources")) {
+            std::vector<int> source_nums = element["sources"];
+            for (int source_num : source_nums) {
+              if (source_num < 0 || source_num >= static_cast<int>(sources.size())) {
+                BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name()
+                                         << "] Invalid source index: " << source_num;
+                return false;
+              }
+            }
+            system->set_source_nums(source_nums);
+            std::ostringstream allowed;
+            for (size_t i = 0; i < source_nums.size(); ++i) {
+              if (i) allowed << ",";
+              allowed << source_nums[i];
+            }
+            BOOST_LOG_TRIVIAL(info) << "Allowed Sources: [" << allowed.str() << "]";
           }
           system->set_talkgroups_file(element.value("talkgroupsFile", ""));
           BOOST_LOG_TRIVIAL(info) << "Talkgroups File: " << system->get_talkgroups_file();

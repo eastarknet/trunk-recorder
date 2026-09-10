@@ -55,6 +55,8 @@ struct Config {
   bool archive_files_on_failure;
   int frequency_format;
   std::string filename_format;
+  std::vector<unsigned long> record_deny_talkgroups;
+  bool patch_group_duplicate_output;
 };
 
 struct Audio_Postprocess_Config {

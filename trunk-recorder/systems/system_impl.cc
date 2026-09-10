@@ -500,6 +500,14 @@ void System_impl::set_source(Source *s) {
   this->source = s;
 }
 
+void System_impl::set_source_nums(std::vector<int> nums) {
+  this->source_nums = nums;
+}
+
+std::vector<int> System_impl::get_source_nums() {
+  return this->source_nums;
+}
+
 Talkgroup *System_impl::find_talkgroup(long tg_number) {
   return talkgroups->find_talkgroup(sys_num, tg_number);
 }

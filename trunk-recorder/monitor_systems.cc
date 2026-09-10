@@ -1,7 +1,10 @@
 #include "monitor_systems.h"
+#include <algorithm>
 #include "recorders/p25_recorder.h"
 #include "systems/dmr_parser.h"
 #include <chrono>
+#include <cmath>
+#include <map>
 #include <boost/log/sinks/text_file_backend.hpp>
 #include <boost/log/core.hpp>
 
@@ -85,106 +88,117 @@ bool start_recorder(Call *call, TrunkMessage message, Config &config, System *sy
     }
   }
 
-  for (vector<Source *>::iterator it = sources.begin(); it != sources.end(); it++) {
-    Source *source = *it;
-
-    if ((source->get_min_hz() <= call->get_freq()) &&
-        (source->get_max_hz() >= call->get_freq())) {
-      source_found = true;
-
-      if (talkgroup) {
-        int priority = talkgroup->get_priority();
-        BOOST_FOREACH (auto &TGID, sys->get_talkgroup_patch(call->get_talkgroup())) {
-          if (sys->find_talkgroup(TGID) != NULL) {
-            if (sys->find_talkgroup(TGID)->get_priority() < priority) {
-              priority = sys->find_talkgroup(TGID)->get_priority();
-              BOOST_LOG_TRIVIAL(info) << "Temporarily increased priority of talkgroup " << call->get_talkgroup() << " to " << sys->find_talkgroup(TGID)->get_priority() << " due to active patch with talkgroup " << TGID;
-            }
-          }
-        }
-        if (talkgroup->mode.compare("A") == 0) {
-          recorder = source->get_analog_recorder(talkgroup, priority, call);
-          call->set_is_analog(true);
-        } else if (sys->get_system_type() == "dmr") {
-          recorder = source->get_dmr_recorder(talkgroup, priority, call);
-        } else {
-          recorder = source->get_digital_recorder(talkgroup, priority, call);
-        }
+  std::vector<Source *> candidate_sources;
+  if (sys->get_source_nums().empty()) {
+    candidate_sources = sources;
+  } else {
+    for (int source_num : sys->get_source_nums()) {
+      if (source_num >= 0 && source_num < static_cast<int>(sources.size())) {
+        candidate_sources.push_back(sources[source_num]);
       } else {
-        std::string loghdr = log_header( call->get_short_name(), call->get_call_num(), call->get_talkgroup_display(), call->get_freq());
-        BOOST_LOG_TRIVIAL(info) << loghdr << "TG not in Talkgroup File ";
-
-        // A talkgroup was not found from the talkgroup file.
-        // Use an analog recorder if this is a Type II trunk and defaultMode is analog.
-        // All other cases use a digital recorder.
-        if ((config.default_mode == "analog") && (sys->get_system_type() == "smartnet")) {
-          recorder = source->get_analog_recorder(call);
-          call->set_is_analog(true);
-        } else if (sys->get_system_type() == "dmr") {
-          recorder = source->get_dmr_recorder(call);
-        } else {
-          recorder = source->get_digital_recorder(call);
-        }
-      }
-
-      if (recorder) {
-        if (message.meta.length()) {
-          BOOST_LOG_TRIVIAL(trace) << message.meta;
-        }
-
-        if (recorder->start(call)) {
-          call->set_recorder(recorder);
-          call->set_state(RECORDING);
-          plugman_setup_recorder(recorder);
-          recorder_found = true;
-        } else {
-          call->set_state(MONITORING);
-          // call->set_monitoring_state(NO_SOURCE);
-          recorder_found = false;
-          return false;
-        }
-      } else {
-        // not recording call either because the priority was too low or no
-        // recorders were available
-        return false;
-      }
-
-      debug_recorder = source->get_debug_recorder();
-
-      if (debug_recorder) {
-        debug_recorder->start(call);
-        call->set_debug_recorder(debug_recorder);
-        call->set_debug_recording(true);
-        plugman_setup_recorder(debug_recorder);
-        recorder_found = true;
-      } else {
-        // BOOST_LOG_TRIVIAL(info) << "\tNot debug recording call";
-      }
-
-      sigmf_recorder = source->get_sigmf_recorder();
-
-      if (sigmf_recorder) {
-        sigmf_recorder->start(call);
-        call->set_sigmf_recorder(sigmf_recorder);
-        call->set_sigmf_recording(true);
-        plugman_setup_recorder(sigmf_recorder);
-        recorder_found = true;
-      } else {
-        // BOOST_LOG_TRIVIAL(info) << "\tNot SIGMF recording call";
-      }
-
-      if (recorder_found) {
-        // recording successfully started.
-        return true;
+        BOOST_LOG_TRIVIAL(error) << "[" << sys->get_short_name()
+                                 << "]\tConfigured source index out of range during recorder selection: "
+                                 << source_num;
       }
     }
+  }
+
+  candidate_sources.erase(
+      std::remove_if(candidate_sources.begin(), candidate_sources.end(), [call](Source *source) {
+        return source->get_min_hz() > call->get_freq() || source->get_max_hz() < call->get_freq();
+      }),
+      candidate_sources.end());
+  source_found = !candidate_sources.empty();
+
+  std::sort(candidate_sources.begin(), candidate_sources.end(), [call](Source *a, Source *b) {
+    const double a_distance = std::abs(a->get_center() - call->get_freq());
+    const double b_distance = std::abs(b->get_center() - call->get_freq());
+    return a_distance != b_distance ? a_distance < b_distance : a->get_num() < b->get_num();
+  });
+
+  int priority = talkgroup ? talkgroup->get_priority() : 0;
+  if (talkgroup) {
+    BOOST_FOREACH (auto &TGID, sys->get_talkgroup_patch(call->get_talkgroup())) {
+      Talkgroup *patched_talkgroup = sys->find_talkgroup(TGID);
+      if (patched_talkgroup && patched_talkgroup->get_priority() < priority) {
+        priority = patched_talkgroup->get_priority();
+        BOOST_LOG_TRIVIAL(info) << "Temporarily increased priority of talkgroup "
+                                << call->get_talkgroup() << " to " << priority
+                                << " due to active patch with talkgroup " << TGID;
+      }
+    }
+  }
+
+  for (Source *source : candidate_sources) {
+    recorder = nullptr;
+    call->set_is_analog(false);
+
+    if (talkgroup) {
+      if (talkgroup->mode.compare("A") == 0) {
+        recorder = source->get_analog_recorder(talkgroup, priority, call);
+        call->set_is_analog(true);
+      } else if (sys->get_system_type() == "dmr") {
+        recorder = source->get_dmr_recorder(talkgroup, priority, call);
+      } else {
+        recorder = source->get_digital_recorder(talkgroup, priority, call);
+      }
+    } else {
+      std::string loghdr = log_header(call->get_short_name(), call->get_call_num(),
+                                      call->get_talkgroup_display(), call->get_freq());
+      BOOST_LOG_TRIVIAL(info) << loghdr << "TG not in Talkgroup File ";
+      if ((config.default_mode == "analog") && (sys->get_system_type() == "smartnet")) {
+        recorder = source->get_analog_recorder(call);
+        call->set_is_analog(true);
+      } else if (sys->get_system_type() == "dmr") {
+        recorder = source->get_dmr_recorder(call);
+      } else {
+        recorder = source->get_digital_recorder(call);
+      }
+    }
+
+    if (!recorder) continue;
+    if (message.meta.length()) BOOST_LOG_TRIVIAL(trace) << message.meta;
+    if (!recorder->start(call)) {
+      call->set_state(MONITORING);
+      continue;
+    }
+
+    call->set_recorder(recorder);
+    call->set_state(RECORDING);
+    plugman_setup_recorder(recorder);
+    recorder_found = true;
+
+    debug_recorder = source->get_debug_recorder();
+    if (debug_recorder && debug_recorder->start(call)) {
+      call->set_debug_recorder(debug_recorder);
+      call->set_debug_recording(true);
+      plugman_setup_recorder(debug_recorder);
+    }
+
+    sigmf_recorder = source->get_sigmf_recorder();
+    if (sigmf_recorder && sigmf_recorder->start(call)) {
+      call->set_sigmf_recorder(sigmf_recorder);
+      call->set_sigmf_recording(true);
+      plugman_setup_recorder(sigmf_recorder);
+    }
+    return true;
+  }
+
+  if (source_found && !recorder_found) {
+    call->set_state(MONITORING);
+    call->set_monitoring_state(NO_RECORDER);
+    std::string loghdr = log_header(call->get_short_name(), call->get_call_num(),
+                                    call->get_talkgroup_display(), call->get_freq());
+    BOOST_LOG_TRIVIAL(error) << loghdr
+        << "\u001b[36mNot Recording: no recorder available on any allowed source covering Freq\u001b[0m";
+    return false;
   }
 
   if (!source_found) {
     call->set_state(MONITORING);
     call->set_monitoring_state(NO_SOURCE);
     std::string loghdr = log_header( call->get_short_name(), call->get_call_num(), call->get_talkgroup_display(), call->get_freq());
-    BOOST_LOG_TRIVIAL(error) << loghdr << "\u001b[36mNot Recording: no source covering Freq\u001b[0m";
+    BOOST_LOG_TRIVIAL(error) << loghdr << "\u001b[36mNot Recording: no allowed source covering Freq\u001b[0m";
     return false;
   }
   return false;
@@ -416,6 +430,22 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
   Talkgroup *message_talkgroup = sys->find_talkgroup(message.talkgroup);
   if (message_talkgroup) {
     message_preferredNAC = message_talkgroup->get_preferredNAC();
+  }
+
+  if (std::find(config.record_deny_talkgroups.begin(), config.record_deny_talkgroups.end(),
+                message.talkgroup) != config.record_deny_talkgroups.end()) {
+    static std::map<std::pair<int, unsigned long>, std::chrono::steady_clock::time_point> last_deny_log;
+    const std::pair<int, unsigned long> deny_key(sys->get_sys_num(), message.talkgroup);
+    const auto now = std::chrono::steady_clock::now();
+    const auto previous = last_deny_log.find(deny_key);
+    if (previous == last_deny_log.end() ||
+        now - previous->second >= std::chrono::minutes(1)) {
+      BOOST_LOG_TRIVIAL(info) << "[" << sys->get_short_name()
+                              << "]\tSkipping denied recording talkgroup "
+                              << message.talkgroup;
+      last_deny_log[deny_key] = now;
+    }
+    return;
   }
 
   for (vector<Call *>::iterator it = calls.begin(); it != calls.end();) {
@@ -707,9 +737,28 @@ void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &s
   Source *current_source = system->get_source();
   double control_channel_freq = system->get_next_control_channel();
 
+  std::vector<Source *> allowed_sources;
+  if (system->get_source_nums().empty()) {
+    allowed_sources = sources;
+  } else {
+    for (int source_num : system->get_source_nums()) {
+      if (source_num >= 0 && source_num < static_cast<int>(sources.size())) {
+        allowed_sources.push_back(sources[source_num]);
+      } else {
+        BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name()
+                                 << "]\tConfigured source index out of range during retune: "
+                                 << source_num;
+      }
+    }
+  }
+
+  const bool current_source_allowed =
+      std::find(allowed_sources.begin(), allowed_sources.end(), current_source) != allowed_sources.end();
+
   BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "] Retuning to Control Channel: " << format_freq(control_channel_freq);
 
-  if ((current_source->get_min_hz() <= control_channel_freq) &&
+  if (current_source_allowed &&
+      (current_source->get_min_hz() <= control_channel_freq) &&
       (current_source->get_max_hz() >= control_channel_freq)) {
     source_found = true;
     BOOST_LOG_TRIVIAL(info) << "\t - System Source " << current_source->get_num() << " - Min Freq: " << format_freq(current_source->get_min_hz()) << " Max Freq: " << format_freq(current_source->get_max_hz());
@@ -728,7 +777,7 @@ void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &s
       BOOST_LOG_TRIVIAL(error) << "\t - Unknown system type for Retune";
     }
   } else {
-    for (vector<Source *>::iterator src_it = sources.begin(); src_it != sources.end(); src_it++) {
+    for (vector<Source *>::iterator src_it = allowed_sources.begin(); src_it != allowed_sources.end(); src_it++) {
       Source *source = *src_it;
 
       if ((source->get_min_hz() <= control_channel_freq) &&
@@ -777,7 +826,7 @@ void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &s
     }
   }
   if (!source_found) {
-    BOOST_LOG_TRIVIAL(error) << "\t - Unable to retune System control channel, freq not covered by any source.";
+    BOOST_LOG_TRIVIAL(error) << "\t - Unable to retune System control channel, freq not covered by any allowed source.";
   } else {
     if ((system->get_source()->get_autotune_source()) && (system->get_system_type() == "p25")) {
       // If control channel source has autotune enabled, perform adjustments after retune completes

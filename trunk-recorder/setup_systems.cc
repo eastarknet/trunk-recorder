@@ -140,8 +140,23 @@ bool setup_systems(Config &config, gr::top_block_sptr &tb, std::vector<Source *>
       double control_channel_freq = system->get_current_control_channel();
       BOOST_LOG_TRIVIAL(info) << "[" << system->get_short_name() << "]\tStarted with Control Channel: " << format_freq(control_channel_freq);
 
-      for (vector<Source *>::iterator src_it = sources.begin(); src_it != sources.end(); src_it++) {
-        source = *src_it;
+      std::vector<Source *> allowed_sources;
+      if (system->get_source_nums().empty()) {
+        allowed_sources = sources;
+      } else {
+        for (int source_num : system->get_source_nums()) {
+          if (source_num >= 0 && source_num < static_cast<int>(sources.size())) {
+            allowed_sources.push_back(sources[source_num]);
+          } else {
+            BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name()
+                                     << "]\tConfigured source index out of range during setup: "
+                                     << source_num;
+          }
+        }
+      }
+
+      for (Source *allowed_source : allowed_sources) {
+        source = allowed_source;
 
         if ((source->get_min_hz() <= control_channel_freq) &&
             (source->get_max_hz() >= control_channel_freq)) {
@@ -184,7 +199,7 @@ bool setup_systems(Config &config, gr::top_block_sptr &tb, std::vector<Source *>
         }
       }
       if (!system_added) {
-        BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "]\t Unable to find a source for this System! Control Channel Freq: " << format_freq(control_channel_freq);
+        BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name() << "]\t Unable to find an allowed source for this System! Control Channel Freq: " << format_freq(control_channel_freq);
         return false;
       }
     }
