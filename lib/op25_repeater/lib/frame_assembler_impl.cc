@@ -119,10 +119,11 @@ namespace gr {
 	
             d_msgq_id(msgq_id),
             d_msg_queue(queue),
+            d_smartnet(strcasecmp(options, "smartnet") == 0),
             output_queue(),
             d_sync(NULL)
         {
-            if (strcasecmp(options, "smartnet") == 0)
+            if (d_smartnet)
                 d_sync = new rx_smartnet(options, logts, debug, msgq_id, queue);
             else if (strcasecmp(options, "subchannel") == 0)
                 d_sync = new rx_subchannel(options, logts, debug, msgq_id, queue);
@@ -167,7 +168,7 @@ namespace gr {
           // msg_queue path and never populates output_queue, so without this guard tags
           // (e.g. cc=-1 from the rx_base default) would accumulate indefinitely on a
           // stalled stream.
-          if (output_queue[slot_id].empty()) {
+          if (d_smartnet && output_queue[slot_id].empty()) {
             continue;
           }
           int src_id = d_sync->get_src_id(slot_id);
