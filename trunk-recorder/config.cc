@@ -315,6 +315,17 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
             BOOST_LOG_TRIVIAL(error) << "Either \"channels\" or \"channelFile\" need to be defined for a conventional system!";
             return false;
           }
+
+          // Conventional DMR learns its actual talkgroup from the voice
+          // channel. Load an optional trunk-style talkgroupsFile so that the
+          // decoded OTA TG can resolve alpha tag, description, group/tag and
+          // other talkgroup metadata at call conclusion.
+          if (system->get_system_type() == "conventionalDMR") {
+            system->set_talkgroups_file(element.value("talkgroupsFile", ""));
+            BOOST_LOG_TRIVIAL(info)
+                << "Talkgroups File: " << system->get_talkgroups_file();
+          }
+
           // If it is a Trunked System
         } else if ((system->get_system_type() == "smartnet") || (system->get_system_type() == "p25") || (system->get_system_type() == "dmr")) {
           BOOST_LOG_TRIVIAL(info) << "Control Channels: ";

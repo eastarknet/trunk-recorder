@@ -1123,13 +1123,9 @@ Call_Data_t Call_Concluder::create_call_data(Call *call, System *sys, const Conf
   const std::string loghdr =
       log_header(call_info.short_name, call_info.call_num, call_info.talkgroup_display, call_info.freq);
 
-  if (const Talkgroup *tg = sys->find_talkgroup(call->get_talkgroup())) {
-    call_info.talkgroup_tag         = tg->tag;
-    call_info.talkgroup_alpha_tag   = tg->alpha_tag;
-    call_info.talkgroup_description = tg->description;
-    call_info.talkgroup_group       = tg->group;
-  }
-  // else: string members are value-initialized to "".
+  // Talkgroup metadata is resolved after the transmission list has been
+  // processed. Conventional DMR starts with a channel-index placeholder TG
+  // and learns the real OTA talkgroup from grp_id tags in the recorder.
 
   if (call->get_is_analog())        call_info.audio_type = "analog";
   else if (call->get_phase2_tdma()) call_info.audio_type = "digital tdma";
@@ -1215,6 +1211,27 @@ Call_Data_t Call_Concluder::create_call_data(Call *call, System *sys, const Conf
     playable_pos_s += seg_len_s;
     audio_sum_ms   += seg_ms;
     ++it;
+  }
+
+  // By this point call_info.talkgroup reflects the recorded OTA talkgroup.
+  // Refresh every TG-dependent field from that canonical value. This is
+  // required for conventional DMR where the Call object itself was created
+  // with the conventional channel index rather than the OTA DMR TG.
+  call_info.patched_talkgroups = sys->get_talkgroup_patch(call_info.talkgroup);
+  call_info.talkgroup_tag.clear();
+  call_info.talkgroup_alpha_tag.clear();
+  call_info.talkgroup_description.clear();
+  call_info.talkgroup_group.clear();
+
+  if (const Talkgroup *tg = sys->find_talkgroup(call_info.talkgroup)) {
+    call_info.talkgroup_tag         = tg->tag;
+    call_info.talkgroup_alpha_tag   = tg->alpha_tag;
+    call_info.talkgroup_description = tg->description;
+    call_info.talkgroup_group       = tg->group;
+  }
+
+  if (sys->get_system_type() == "conventionalDMR") {
+    call_info.talkgroup_display = std::to_string(call_info.talkgroup);
   }
 
   if (have_any) {
