@@ -339,7 +339,7 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
           if (element.contains("sources")) {
             std::vector<int> source_nums = element["sources"];
             for (int source_num : source_nums) {
-              if (source_num < 0 || source_num >= static_cast<int>(sources.size())) {
+              if (source_num < 0 || source_num >= static_cast<int>(data["sources"].size())) {
                 BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name()
                                          << "] Invalid source index: " << source_num;
                 return false;
