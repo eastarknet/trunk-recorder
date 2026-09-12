@@ -605,6 +605,11 @@ dmr_slot::decode_tlc(uint8_t* tlc) {
 	if (!rc)
 		return false;
 
+	// A valid Terminator with LC marks the end of this DMR transmission.
+	// frame_assembler_impl consumes this state and emits the terminate
+	// stream tag used by transmission_sink to close the temporary WAV.
+	d_terminated = std::make_pair(true, 0L);
+
 	// send up the stack
 	std::string lc_msg(12,0);
 	for (int i = 0; i < 12; i++) {
@@ -756,7 +761,12 @@ dmr_slot::decode_emb() {
 }
 
 std::pair<bool,long> dmr_slot::get_terminated() {
-	return d_terminated;
+	// Termination is an event, not persistent slot state. Consume it when
+	// the frame assembler observes it so one End-LC cannot generate a
+	// terminate tag on every subsequent scheduler invocation.
+	std::pair<bool,long> terminated = d_terminated;
+	d_terminated = std::make_pair(false, 0L);
+	return terminated;
 }
 
 int dmr_slot::get_src_id() {

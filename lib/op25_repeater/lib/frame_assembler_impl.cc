@@ -156,6 +156,29 @@ namespace gr {
           amt_produce = output_queue.size();
         }
 */  
+        // DMR End-LC may arrive without producing any PCM samples.  The
+        // transmission sink consumes stream tags, so provide one blank carrier
+        // item when needed.  transmission_sink treats a one-item terminate
+        // carrier as "terminator without voice samples" and closes the current
+        // transmission without writing that carrier into the WAV.
+        std::pair<bool,long> terminated[2] = {
+          std::make_pair(false, 0L),
+          std::make_pair(false, 0L)
+        };
+
+        if (!d_smartnet) {
+          for (int slot_id = 0; slot_id < 2; slot_id++) {
+            terminated[slot_id] = d_sync->get_terminated(slot_id);
+
+            if (terminated[slot_id].first && output_queue[slot_id].empty()) {
+              BOOST_LOG_TRIVIAL(debug)
+                  << "DMR Frame Assembler - injecting terminate carrier slot: "
+                  << slot_id;
+              output_queue[slot_id].push_back(0);
+            }
+          }
+        }
+
         produce(0, output_queue[0].size());
         produce(1, output_queue[1].size());
 
@@ -174,7 +197,6 @@ namespace gr {
           int src_id = d_sync->get_src_id(slot_id);
           int dst_id = d_sync->get_dst_id(slot_id);
           int cc = d_sync->get_cc(slot_id);
-          std::pair<bool,long> terminated = d_sync->get_terminated(slot_id);
           if ((src_id != -1) && (src_id != 0)) {
             BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending src: " << src_id;
             add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("src_id"), pmt::from_long(src_id), pmt::intern(name()));
@@ -187,10 +209,18 @@ namespace gr {
             BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending cc: " << cc;
             add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("cc"), pmt::from_long(cc), pmt::intern(name()));
           }
-          /*
-        if (terminated) {
-            add_item_tag(0, nitems_written(0), pmt::intern("terminate"), pmt::from_long(1), pmt::intern(name()));
-        }*/
+          if (terminated[slot_id].first) {
+            BOOST_LOG_TRIVIAL(debug)
+                << "DMR Frame Assembler - sending terminate slot: "
+                << slot_id;
+
+            add_item_tag(
+                slot_id,
+                nitems_written(slot_id),
+                pmt::intern("terminate"),
+                pmt::from_long(1),
+                pmt::intern(name()));
+          }
           for (int i = 0; i < output_queue[slot_id].size(); i++) {
               //BOOST_LOG_TRIVIAL(info) << output_queue[slot_id][i];
             out[i] = output_queue[slot_id][i];
