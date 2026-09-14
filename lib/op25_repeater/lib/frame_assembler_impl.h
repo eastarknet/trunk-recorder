@@ -31,6 +31,7 @@
 #include <deque>
 #include <array>
 #include "rx_base.h"
+#include "dmr_metadata_pending.h"
 #include "log_ts.h"
 
 typedef std::deque<uint8_t> dibit_queue;
@@ -45,6 +46,7 @@ namespace gr {
                 int d_msgq_id;
                 gr::msg_queue::sptr d_msg_queue;
                 bool d_smartnet;
+                dmr_metadata_pending d_pending_metadata;
                 //std::deque<int16_t> output_queue[2];
                 std::array<std::deque<int16_t>, 2> output_queue;
                 rx_base* d_sync;

@@ -120,6 +120,7 @@ namespace gr {
             d_msgq_id(msgq_id),
             d_msg_queue(queue),
             d_smartnet(strcasecmp(options, "smartnet") == 0),
+            d_pending_metadata(),
             output_queue(),
             d_sync(NULL)
         {
@@ -194,20 +195,47 @@ namespace gr {
           if (d_smartnet && output_queue[slot_id].empty()) {
             continue;
           }
+
           int src_id = d_sync->get_src_id(slot_id);
           int dst_id = d_sync->get_dst_id(slot_id);
           int cc = d_sync->get_cc(slot_id);
-          if ((src_id != -1) && (src_id != 0)) {
-            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending src: " << src_id;
-            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("src_id"), pmt::from_long(src_id), pmt::intern(name()));
+
+          int tag_src_id = src_id;
+          int tag_dst_id = dst_id;
+          int tag_cc = cc;
+
+          if (!d_smartnet) {
+            dmr_metadata_values metadata =
+                d_pending_metadata.update(
+                    slot_id,
+                    src_id,
+                    dst_id,
+                    cc,
+                    terminated[slot_id].first,
+                    !output_queue[slot_id].empty());
+
+            // DMR metadata may be decoded before any PCM exists.  Never add
+            // stream tags to a zero-output port because nitems_written() does
+            // not advance and those tags can accumulate indefinitely.
+            if (output_queue[slot_id].empty()) {
+              continue;
+            }
+
+            tag_src_id = metadata.src_id;
+            tag_dst_id = metadata.dst_id;
+            tag_cc = metadata.cc;
           }
-          if (dst_id != -1) {
-            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending dst: " << dst_id;
-            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("grp_id"), pmt::from_long(dst_id), pmt::intern(name()));
+          if ((tag_src_id != -1) && (tag_src_id != 0)) {
+            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending src: " << tag_src_id;
+            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("src_id"), pmt::from_long(tag_src_id), pmt::intern(name()));
           }
-          if ((cc != -1) && (cc != 0)) {
-            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending cc: " << cc;
-            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("cc"), pmt::from_long(cc), pmt::intern(name()));
+          if (tag_dst_id != -1) {
+            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending dst: " << tag_dst_id;
+            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("grp_id"), pmt::from_long(tag_dst_id), pmt::intern(name()));
+          }
+          if ((tag_cc != -1) && (tag_cc != 0)) {
+            BOOST_LOG_TRIVIAL(debug) << "DMR Frame Assembler - sending cc: " << tag_cc;
+            add_item_tag(slot_id, nitems_written(slot_id), pmt::intern("cc"), pmt::from_long(tag_cc), pmt::intern(name()));
           }
           if (terminated[slot_id].first) {
             BOOST_LOG_TRIVIAL(debug)
