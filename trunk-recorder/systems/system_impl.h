@@ -8,6 +8,7 @@
 //#include "../source.h"
 #include "dmr_trunking.h"
 #include "p25_trunking.h"
+#include "../gr_blocks/p25_source_selector.h"
 #include "parser.h"
 //#include "smartnet_trunking.h"
 #include "smartnet_impl.h"
@@ -126,6 +127,12 @@ public:
 
   smartnet_impl::sptr smartnet_trunking;
   p25_trunking_sptr p25_trunking;
+
+  // P25 control-channel inputs remain permanently connected.
+  gr::blocks::p25_source_selector::sptr
+      p25_control_source_selector;
+  std::vector<Source *>
+      p25_control_source_selector_sources;
   dmr_trunking_sptr dmr_trunking;
 
   // Trunked-DMR per-system state

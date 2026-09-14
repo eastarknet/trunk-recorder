@@ -810,17 +810,88 @@ bool retune_system_to_frequency(System *sys, double control_channel_freq, gr::to
           tb->connect(source->get_src_block(), 0, system->smartnet_trunking, 0);
           tb->unlock();
         } else if (system->get_system_type() == "p25") {
-          system->set_source(source);
-          // We must lock the flow graph in order to disconnect and reconnect blocks
-          // ( We have gone back and forth on whether this should be lock/unlock or stop/wait/start.
-          //   If there are unexplained issues around control channel tuning, we should look at alternet
-          //   approaches. See PR #1090 )
-          tb->lock();
-          tb->disconnect(current_source->get_src_block(), 0, system->p25_trunking, 0);
-          system->p25_trunking = make_p25_trunking(control_channel_freq, source->get_center(), source->get_rate(), system->get_msg_queue(), system->get_qpsk_mod(), system->get_sys_num());
-          tb->connect(source->get_src_block(), 0, system->p25_trunking, 0);
-          tb->unlock();
-        } else if (system->get_system_type() == "dmr") {
+            if (system->p25_control_source_selector) {
+              const auto selector_source =
+                  std::find(
+                      system->p25_control_source_selector_sources.begin(),
+                      system->p25_control_source_selector_sources.end(),
+                      source);
+
+              if (selector_source ==
+                  system->p25_control_source_selector_sources.end()) {
+                BOOST_LOG_TRIVIAL(error)
+                    << "\t - P25 selector has no input for Source "
+                    << source->get_num();
+
+                source_found = false;
+                break;
+              }
+
+              if (!current_source ||
+                  source->get_rate() !=
+                      current_source->get_rate()) {
+                BOOST_LOG_TRIVIAL(error)
+                    << "\t - Refusing persistent P25 source "
+                    << "switch across different sample rates";
+
+                source_found = false;
+                break;
+              }
+
+              const unsigned int selector_input =
+                  static_cast<unsigned int>(
+                      std::distance(
+                          system->p25_control_source_selector_sources.begin(),
+                          selector_source));
+
+              system->p25_trunking->set_center(
+                  source->get_center());
+
+              system->p25_trunking->tune_freq(
+                  control_channel_freq);
+
+              system->p25_control_source_selector
+                  ->set_input_index(selector_input);
+
+              system->set_source(source);
+
+              BOOST_LOG_TRIVIAL(info)
+                  << "\t - Persistent P25 source switch "
+                  << current_source->get_num()
+                  << " -> "
+                  << source->get_num()
+                  << " on selector input "
+                  << selector_input;
+            } else {
+              // Compatibility fallback for mixed-rate source sets.
+              system->set_source(source);
+
+              tb->lock();
+
+              tb->disconnect(
+                  current_source->get_src_block(),
+                  0,
+                  system->p25_trunking,
+                  0);
+
+              system->p25_trunking =
+                  make_p25_trunking(
+                      control_channel_freq,
+                      source->get_center(),
+                      source->get_rate(),
+                      system->get_msg_queue(),
+                      system->get_qpsk_mod(),
+                      system->get_sys_num());
+
+              tb->connect(
+                  source->get_src_block(),
+                  0,
+                  system->p25_trunking,
+                  0);
+
+              tb->unlock();
+            }
+          } else if (system->get_system_type() == "dmr") {
           system->set_source(source);
           tb->lock();
           tb->disconnect(current_source->get_src_block(), 0, system->dmr_trunking, 0);

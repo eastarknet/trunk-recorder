@@ -174,14 +174,91 @@ bool setup_systems(Config &config, gr::top_block_sptr &tb, std::vector<Source *>
           }
 
           if (system->get_system_type() == "p25") {
-            system->p25_trunking = make_p25_trunking(control_channel_freq,
-                                                     source->get_center(),
-                                                     source->get_rate(),
-                                                     system->get_msg_queue(),
-                                                     system->get_qpsk_mod(),
-                                                     system->get_sys_num());
-            tb->connect(source->get_src_block(), 0, system->p25_trunking, 0);
-          }
+              system->p25_trunking =
+                  make_p25_trunking(
+                      control_channel_freq,
+                      source->get_center(),
+                      source->get_rate(),
+                      system->get_msg_queue(),
+                      system->get_qpsk_mod(),
+                      system->get_sys_num());
+
+              bool selector_compatible =
+                  allowed_sources.size() > 1;
+
+              const double selector_rate =
+                  source->get_rate();
+
+              unsigned int initial_input = 0;
+
+              for (size_t i = 0;
+                   i < allowed_sources.size();
+                   ++i) {
+                if (allowed_sources[i] == source) {
+                  initial_input =
+                      static_cast<unsigned int>(i);
+                }
+
+                if (allowed_sources[i]->get_rate() !=
+                    selector_rate) {
+                  selector_compatible = false;
+                }
+              }
+
+              if (selector_compatible) {
+                system->p25_control_source_selector =
+                    gr::blocks::p25_source_selector::make(
+                        sizeof(gr_complex),
+                        initial_input);
+
+                system->p25_control_source_selector_sources =
+                    allowed_sources;
+
+                for (size_t i = 0;
+                     i < allowed_sources.size();
+                     ++i) {
+                  tb->connect(
+                      allowed_sources[i]->get_src_block(),
+                      0,
+                      system->p25_control_source_selector,
+                      static_cast<int>(i));
+                }
+
+                tb->connect(
+                    system->p25_control_source_selector,
+                    0,
+                    system->p25_trunking,
+                    0);
+
+                BOOST_LOG_TRIVIAL(info)
+                    << "["
+                    << system->get_short_name()
+                    << "]\tP25 persistent source selector enabled "
+                    << "with "
+                    << allowed_sources.size()
+                    << " inputs at "
+                    << selector_rate
+                    << " samples/sec";
+              } else {
+                system->p25_control_source_selector.reset();
+                system->p25_control_source_selector_sources.clear();
+
+                tb->connect(
+                    source->get_src_block(),
+                    0,
+                    system->p25_trunking,
+                    0);
+
+                if (allowed_sources.size() > 1) {
+                  BOOST_LOG_TRIVIAL(warning)
+                      << "["
+                      << system->get_short_name()
+                      << "]\tP25 persistent source selector "
+                      << "disabled because allowed sources "
+                      << "have different sample rates";
+                }
+              }
+            }
 
           if (system->get_system_type() == "dmr") {
             if (system->lcn_count() == 0) {

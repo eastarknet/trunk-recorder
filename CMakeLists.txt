@@ -311,6 +311,7 @@ list(APPEND trunk_recorder_sources
   trunk-recorder/gr_blocks/decoder_wrapper_impl.cc
   trunk-recorder/gr_blocks/plugin_wrapper_impl.cc
   trunk-recorder/gr_blocks/selector_impl.cc
+  trunk-recorder/gr_blocks/p25_source_selector_impl.cc
   trunk-recorder/gr_blocks/pwr_squelch_cc_impl.cc
   trunk-recorder/gr_blocks/squelch_base_cc_impl.cc
   trunk-recorder/gr_blocks/wavfile_gr3.8.cc
