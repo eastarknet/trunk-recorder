@@ -3,6 +3,7 @@
 #include "recorders/p25_recorder.h"
 #include "systems/capacity_plus_parser.h"
 #include "systems/dmr_parser.h"
+#include "dmr_timeout_policy.h"
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -266,8 +267,38 @@ void manage_conventional_call(Call *call, Config &config) {
   // method). For DMR this routes to the right transmission_sink so two calls
   // sharing a recorder don't see each other's idle/length state.
   int slot = call->get_tdma_slot();
+  const double current_length = call->get_current_length();
+  const double seconds_since_last_write = recorder->since_last_write(slot);
+  const State recorder_state = recorder->get_state(slot);
 
-  if (call->get_current_length() > 0) {
+  // DMR normally transitions the slot to IDLE when a valid Terminator-with-LC
+  // produces a terminate stream tag. RF loss or an undecodable final TLC can
+  // leave the sink RECORDING forever, however. Use the sink's monotonic
+  // last-write clock as a bounded fallback so an otherwise-complete
+  // conventional DMR transmission cannot remain attached for hours.
+  if (should_force_conventional_dmr_timeout(
+          call->get_system_type(),
+          recorder_state == RECORDING,
+          current_length,
+          seconds_since_last_write,
+          config.call_timeout)) {
+    BOOST_LOG_TRIVIAL(warning)
+        << "[" << call->get_short_name() << "]\t"
+        << call->get_call_num() << "C"
+        << "\tConventional DMR missing-termination fallback"
+        << "\tSlot: " << slot
+        << "\tLength: " << current_length
+        << "\tNo PCM for: " << seconds_since_last_write << "s"
+        << "\tTimeout: " << config.call_timeout << "s";
+
+    call->conclude_call();
+    call->restart_call();
+    plugman_setup_recorder(recorder);
+    plugman_call_start(call);
+    return;
+  }
+
+  if (current_length > 0) {
     BOOST_LOG_TRIVIAL(trace) << "[" << call->get_short_name() << "]\t\033[0;34m" << call->get_call_num() << "C\033[0m Call Length: " << call->get_current_length() << "s\t Idle: " << recorder->is_idle(slot) << "\t Squelched: " << recorder->is_squelched() << " Idle Count: " << call->get_idle_count();
 
     if (recorder->is_idle(slot)) {
@@ -285,7 +316,7 @@ void manage_conventional_call(Call *call, Config &config) {
       call->restart_call();
       plugman_setup_recorder(recorder);
       plugman_call_start(call);
-    } else if ((call->get_current_length() > call->get_system()->get_max_duration()) && (call->get_system()->get_max_duration() > 0)) {
+    } else if ((current_length > call->get_system()->get_max_duration()) && (call->get_system()->get_max_duration() > 0)) {
       call->conclude_call();
       call->restart_call();
       plugman_setup_recorder(recorder);
@@ -726,11 +757,115 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
       retune_system(sys,tb,sources);
       break;
 
-    case CAPACITY_PLUS_REST_CHANNEL:
-      if (capacity_plus_rest_retune_needed(sys->get_current_control_channel(), message.freq)) {
-        retune_system_to_frequency(sys, message.freq, tb, sources);
+    case CAPACITY_PLUS_REST_CHANNEL: {
+      System_impl *dmr_system = (System_impl *)sys;
+      if (!capacity_plus_rest_signaling_retune_allowed(
+              dmr_system->get_capacity_plus_multi_frequency())) {
+        // Every configured signaling frequency already has a persistent
+        // decoder. The parser has updated logical rest state and attributed
+        // valid activity to the receiver; an announcement is never a retune
+        // request in this mode.
+        break;
+      }
+      const double current_freq = sys->get_current_control_channel();
+      const double target_freq = message.freq;
+      const long long now_seconds =
+          static_cast<long long>(time(NULL));
+
+      // Valid CAP+ on a probe target proves acquisition immediately.
+      if (dmr_system->dmr_capplus_probe_active &&
+          dmr_system->dmr_capplus_probe_saw_valid) {
+        BOOST_LOG_TRIVIAL(info)
+            << "[" << sys->get_short_name()
+            << "] Capacity Plus rest-channel probe acquired "
+            << format_freq(current_freq);
+
+        dmr_system->dmr_capplus_probe_active = false;
+        dmr_system->dmr_capplus_probe_previous_freq = 0;
+        dmr_system->dmr_capplus_probe_target_freq = 0;
+        dmr_system->dmr_capplus_probe_started_at = 0;
+        dmr_system->dmr_capplus_probe_saw_non_timeout = false;
+        dmr_system->dmr_capplus_probe_saw_valid = false;
+      }
+
+      // A rest announcement for the RF channel already being monitored is
+      // strong contradictory evidence against any pending cross-frequency
+      // candidate. Require matching announcements to be consecutive.
+      if (!capacity_plus_rest_retune_needed(current_freq, target_freq)) {
+        dmr_system->dmr_capplus_pending_rest_freq = 0;
+        dmr_system->dmr_capplus_pending_rest_first_seen = 0;
+        dmr_system->dmr_capplus_pending_rest_count = 0;
+        break;
+      }
+
+      const bool same_candidate =
+          dmr_system->dmr_capplus_pending_rest_count > 0 &&
+          dmr_system->dmr_capplus_pending_rest_freq == target_freq &&
+          capacity_plus_rest_confirmation_window_open(
+              now_seconds,
+              dmr_system->dmr_capplus_pending_rest_first_seen);
+
+      if (same_candidate) {
+        dmr_system->dmr_capplus_pending_rest_count++;
+      } else {
+        dmr_system->dmr_capplus_pending_rest_freq = target_freq;
+        dmr_system->dmr_capplus_pending_rest_first_seen = now_seconds;
+        dmr_system->dmr_capplus_pending_rest_count = 1;
+      }
+
+      BOOST_LOG_TRIVIAL(debug)
+          << "[" << sys->get_short_name()
+          << "] Capacity Plus cross-frequency rest candidate "
+          << format_freq(target_freq)
+          << " confirmation "
+          << dmr_system->dmr_capplus_pending_rest_count
+          << "/"
+          << CAPACITY_PLUS_REST_CONFIRMATIONS_REQUIRED;
+
+      if (dmr_system->dmr_capplus_pending_rest_count <
+          CAPACITY_PLUS_REST_CONFIRMATIONS_REQUIRED) {
+        break;
+      }
+
+      // The current RF channel has just produced valid CAP+ signaling, so it
+      // is the known-good fallback if the newly announced rest channel fails.
+      const double previous_freq = current_freq;
+
+      dmr_system->dmr_capplus_probe_active = true;
+      dmr_system->dmr_capplus_probe_previous_freq = previous_freq;
+      dmr_system->dmr_capplus_probe_target_freq = target_freq;
+      dmr_system->dmr_capplus_probe_started_at = now_seconds;
+      dmr_system->dmr_capplus_probe_saw_non_timeout = false;
+      dmr_system->dmr_capplus_probe_saw_valid = false;
+
+      dmr_system->dmr_capplus_pending_rest_freq = 0;
+      dmr_system->dmr_capplus_pending_rest_first_seen = 0;
+      dmr_system->dmr_capplus_pending_rest_count = 0;
+
+      BOOST_LOG_TRIVIAL(info)
+          << "[" << sys->get_short_name()
+          << "] Capacity Plus confirmed rest move "
+          << format_freq(previous_freq)
+          << " -> "
+          << format_freq(target_freq)
+          << "; starting acquisition probe";
+
+      if (!retune_system_to_frequency(sys, target_freq, tb, sources)) {
+        BOOST_LOG_TRIVIAL(error)
+            << "[" << sys->get_short_name()
+            << "] Capacity Plus confirmed rest move could not retune to "
+            << format_freq(target_freq)
+            << "; retaining previous channel";
+
+        dmr_system->dmr_capplus_probe_active = false;
+        dmr_system->dmr_capplus_probe_previous_freq = 0;
+        dmr_system->dmr_capplus_probe_target_freq = 0;
+        dmr_system->dmr_capplus_probe_started_at = 0;
+        dmr_system->dmr_capplus_probe_saw_non_timeout = false;
+        dmr_system->dmr_capplus_probe_saw_valid = false;
       }
       break;
+    }
 
     case UNKNOWN:
       break;
@@ -740,12 +875,27 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
 
 void retune_system(System *sys, gr::top_block_sptr &tb, std::vector<Source *> &sources) {
   System_impl *system = (System_impl *)sys;
+  if (system->get_system_type() == "dmr" &&
+      system->get_capacity_plus_multi_frequency()) {
+    BOOST_LOG_TRIVIAL(debug) << "[" << system->get_short_name()
+                             << "] Ignoring signaling retune request in "
+                                "Capacity Plus multi-frequency mode";
+    return;
+  }
   double control_channel_freq = system->get_next_control_channel();
   retune_system_to_frequency(sys, control_channel_freq, tb, sources);
 }
 
 bool retune_system_to_frequency(System *sys, double control_channel_freq, gr::top_block_sptr &tb, std::vector<Source *> &sources) {
   System_impl *system = (System_impl *)sys;
+  if (system->get_system_type() == "dmr" &&
+      system->get_capacity_plus_multi_frequency()) {
+    BOOST_LOG_TRIVIAL(debug) << "[" << system->get_short_name()
+                             << "] Ignoring signaling retune to "
+                             << format_freq(control_channel_freq)
+                             << " in Capacity Plus multi-frequency mode";
+    return false;
+  }
   bool source_found = false;
   Source *current_source = system->get_source();
 
@@ -932,7 +1082,111 @@ void check_message_count(float timeDiff, Config &config, gr::top_block_sptr &tb,
       int msgs_decoded_per_second = std::floor(sys->message_count / timeDiff);
       sys->set_decode_rate(msgs_decoded_per_second);
 
-      if (msgs_decoded_per_second < 2) {
+      const long long capacity_plus_last_activity =
+          sys->get_dmr_capplus_last_activity();
+      const long long now_seconds =
+          static_cast<long long>(time(NULL));
+
+      bool probe_transition_handled = false;
+
+      if (sys->get_system_type() == "dmr" &&
+          sys->dmr_capplus_probe_active) {
+
+        const long long probe_age =
+            now_seconds >= sys->dmr_capplus_probe_started_at
+                ? now_seconds - sys->dmr_capplus_probe_started_at
+                : 0;
+
+        if (sys->dmr_capplus_probe_saw_valid) {
+          BOOST_LOG_TRIVIAL(info)
+              << "[" << sys->get_short_name()
+              << "] Capacity Plus rest-channel probe acquired "
+              << format_freq(sys->get_current_control_channel())
+              << " after " << probe_age << "s";
+
+          sys->dmr_capplus_probe_active = false;
+          sys->dmr_capplus_probe_previous_freq = 0;
+          sys->dmr_capplus_probe_target_freq = 0;
+          sys->dmr_capplus_probe_started_at = 0;
+          sys->dmr_capplus_probe_saw_non_timeout = false;
+          sys->dmr_capplus_probe_saw_valid = false;
+
+        } else if (capacity_plus_probe_timed_out(
+                       now_seconds,
+                       sys->dmr_capplus_probe_started_at,
+                       sys->dmr_capplus_probe_saw_non_timeout)) {
+
+          const double failed_freq =
+              sys->get_current_control_channel();
+          const double fallback_freq =
+              sys->dmr_capplus_probe_previous_freq;
+          const bool saw_non_timeout =
+              sys->dmr_capplus_probe_saw_non_timeout;
+
+          BOOST_LOG_TRIVIAL(warning)
+              << "[" << sys->get_short_name()
+              << "] Capacity Plus rest-channel probe failed on "
+              << format_freq(failed_freq)
+              << " after " << probe_age << "s ("
+              << (saw_non_timeout
+                      ? "non-timeout DMR seen but no valid CAP+"
+                      : "sync timeouts only")
+              << "); returning to "
+              << format_freq(fallback_freq);
+
+          sys->dmr_capplus_probe_active = false;
+          sys->dmr_capplus_probe_target_freq = 0;
+          sys->dmr_capplus_probe_started_at = 0;
+          sys->dmr_capplus_probe_saw_non_timeout = false;
+          sys->dmr_capplus_probe_saw_valid = false;
+
+          sys->dmr_capplus_pending_rest_freq = 0;
+          sys->dmr_capplus_pending_rest_first_seen = 0;
+          sys->dmr_capplus_pending_rest_count = 0;
+
+          if (fallback_freq != 0 &&
+              fallback_freq != failed_freq) {
+            retune_system_to_frequency(
+                sys, fallback_freq, tb, sources);
+          }
+
+          sys->dmr_capplus_probe_previous_freq = 0;
+          probe_transition_handled = true;
+        }
+      }
+
+      const bool capacity_plus_locked =
+          (sys->get_system_type() == "dmr") &&
+          (capacity_plus_last_activity > 0);
+
+      // While actively proving a newly selected rest channel, the short
+      // acquisition probe owns recovery. Once established, fall back to the
+      // long stale-activity watchdog.
+      const bool control_channel_lost =
+          sys->get_capacity_plus_multi_frequency()
+              ? false
+              : ((!probe_transition_handled &&
+                  !sys->dmr_capplus_probe_active)
+                     ? (capacity_plus_locked
+                            ? capacity_plus_control_activity_lost(
+                                  now_seconds,
+                                  capacity_plus_last_activity)
+                            : (msgs_decoded_per_second < 2))
+                     : false);
+
+      if (control_channel_lost) {
+
+        if (capacity_plus_locked) {
+          const long long activity_age =
+              now_seconds >= capacity_plus_last_activity
+                  ? now_seconds - capacity_plus_last_activity
+                  : 0;
+          BOOST_LOG_TRIVIAL(warning)
+              << "[" << sys->get_short_name()
+              << "] Capacity Plus signaling stale for "
+              << activity_age
+              << "s; searching configured channels";
+        }
 
         // if it loses track of the control channel, quit after a while
         if (config.control_retune_limit > 0) {

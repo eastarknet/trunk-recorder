@@ -88,6 +88,24 @@ int main() {
   const std::array<uint8_t, 4> op25_slc_lsn16 = {0x0F, 0x03, 0xB0, 0x5A};
   expect(capacity_plus_rest_lsn_from_op25_slc(op25_slc_lsn16.data()) == 16,
          "OP25 CACH SLC preserves five-bit rest LSN 16");
+  expect(!capacity_plus_control_activity_lost(120, 60) &&
+             capacity_plus_control_activity_lost(121, 60) &&
+             capacity_plus_control_activity_lost(100, 0) &&
+             !capacity_plus_control_activity_lost(50, 60),
+         "Capacity Plus control health uses age of last valid activity");
+
+  expect(CAPACITY_PLUS_REST_CONFIRMATIONS_REQUIRED == 2 &&
+             capacity_plus_rest_confirmation_window_open(103, 100) &&
+             !capacity_plus_rest_confirmation_window_open(104, 100),
+         "Capacity Plus cross-frequency rest confirmation window");
+
+  expect(capacity_plus_probe_timeout_seconds(false) == 5 &&
+             capacity_plus_probe_timeout_seconds(true) == 15 &&
+             !capacity_plus_probe_timed_out(104, 100, false) &&
+             capacity_plus_probe_timed_out(105, 100, false) &&
+             !capacity_plus_probe_timed_out(114, 100, true) &&
+             capacity_plus_probe_timed_out(115, 100, true),
+         "Capacity Plus probe uses fast dead-channel and weak-RF timeouts");
 
   if (failures != 0) return EXIT_FAILURE;
   std::cout << "Capacity Plus parser tests passed\n";

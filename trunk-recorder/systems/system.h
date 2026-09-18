@@ -263,6 +263,12 @@ public:
   // Capacity Plus systems. -1 means "not yet seen".
   virtual void set_dmr_rest_lsn(int lsn) = 0;
   virtual int get_dmr_rest_lsn() = 0;
+  virtual bool get_capacity_plus_multi_frequency() = 0;
+  virtual void set_capacity_plus_multi_frequency(bool enabled) = 0;
+  virtual bool resolve_dmr_monitor_frequency(int rxid, double &frequency) = 0;
+  virtual void mark_dmr_capplus_activity(int rxid = -1) = 0;
+  virtual void mark_dmr_capplus_non_timeout_activity(int rxid = -1) = 0;
+  virtual long long get_dmr_capplus_last_activity() = 0;
 
   // Legacy compatibility aliases. The stored value is an LSN, not an LCN.
   virtual void set_dmr_rest_lcn(int lcn) = 0;
