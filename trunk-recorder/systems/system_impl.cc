@@ -207,6 +207,21 @@ System_impl::System_impl(int sys_num) {
   message_count = 0;
   decode_rate = 0;
   dmr_rest_lsn = -1;
+  capacity_plus_multi_frequency = false;
+  dmr_capplus_last_activity = 0;
+
+  dmr_capplus_known_good_freq = 0;
+  dmr_capplus_pending_rest_freq = 0;
+  dmr_capplus_pending_rest_first_seen = 0;
+  dmr_capplus_pending_rest_count = 0;
+
+  dmr_capplus_probe_active = false;
+  dmr_capplus_probe_previous_freq = 0;
+  dmr_capplus_probe_target_freq = 0;
+  dmr_capplus_probe_started_at = 0;
+  dmr_capplus_probe_saw_non_timeout = false;
+  dmr_capplus_probe_saw_valid = false;
+
   dmr_variant = "";
   msg_queue = gr::msg_queue::make(100);
   audio_postprocess_enabled = false;
@@ -969,6 +984,72 @@ void System_impl::set_dmr_rest_lsn(int lsn) {
 
 int System_impl::get_dmr_rest_lsn() {
   return dmr_rest_lsn;
+}
+
+bool System_impl::get_capacity_plus_multi_frequency() {
+  return capacity_plus_multi_frequency;
+}
+
+void System_impl::set_capacity_plus_multi_frequency(bool enabled) {
+  capacity_plus_multi_frequency = enabled;
+}
+
+bool System_impl::resolve_dmr_monitor_frequency(int rxid, double &frequency) {
+  if (!capacity_plus_multi_frequency) {
+    if (control_channels.empty()) return false;
+    frequency = get_current_control_channel();
+    return true;
+  }
+  if (rxid < 0 || static_cast<size_t>(rxid) >= dmr_signaling_monitors.size()) {
+    return false;
+  }
+  const DmrSignalingMonitor &monitor = dmr_signaling_monitors[rxid];
+  if (monitor.rxid != rxid || monitor.receive_frequency == 0) return false;
+  frequency = monitor.receive_frequency;
+  return true;
+}
+
+void System_impl::mark_dmr_capplus_activity(int rxid) {
+  const long long now = static_cast<long long>(std::time(nullptr));
+  if (capacity_plus_multi_frequency) {
+    if (rxid < 0 || static_cast<size_t>(rxid) >= dmr_signaling_monitors.size() ||
+        dmr_signaling_monitors[rxid].rxid != rxid) {
+      return;
+    }
+    dmr_signaling_monitors[rxid].last_capplus_activity = now;
+  }
+  dmr_capplus_last_activity = now;
+
+  // Valid Capacity Plus signaling proves the RF channel currently being
+  // monitored, regardless of which future rest channel it announces.
+  double receive_frequency = 0;
+  if (resolve_dmr_monitor_frequency(rxid, receive_frequency)) {
+    dmr_capplus_known_good_freq = receive_frequency;
+  }
+
+  if (!capacity_plus_multi_frequency && dmr_capplus_probe_active &&
+      dmr_capplus_probe_target_freq == get_current_control_channel()) {
+    dmr_capplus_probe_saw_valid = true;
+  }
+}
+
+void System_impl::mark_dmr_capplus_non_timeout_activity(int rxid) {
+  if (capacity_plus_multi_frequency) {
+    if (rxid < 0 || static_cast<size_t>(rxid) >= dmr_signaling_monitors.size() ||
+        dmr_signaling_monitors[rxid].rxid != rxid) {
+      return;
+    }
+    dmr_signaling_monitors[rxid].last_non_timeout_activity =
+        static_cast<long long>(std::time(nullptr));
+    return;
+  }
+  if (dmr_capplus_probe_active) {
+    dmr_capplus_probe_saw_non_timeout = true;
+  }
+}
+
+long long System_impl::get_dmr_capplus_last_activity() {
+  return dmr_capplus_last_activity;
 }
 
 void System_impl::set_dmr_rest_lcn(int lcn) {

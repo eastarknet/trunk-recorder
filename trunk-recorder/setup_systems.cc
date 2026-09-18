@@ -1,4 +1,5 @@
 #include "./setup_systems.h"
+#include "systems/capacity_plus_parser.h"
 using namespace std;
 bool setup_conventional_channel(System *system, double frequency, long channel_index, Config &config, gr::top_block_sptr &tb, std::vector<Source *> &sources, std::vector<Call *> &calls) {
   bool channel_added = false;
@@ -153,6 +154,69 @@ bool setup_systems(Config &config, gr::top_block_sptr &tb, std::vector<Source *>
                                      << source_num;
           }
         }
+      }
+
+      if (system->get_system_type() == "dmr" &&
+          system->get_capacity_plus_multi_frequency()) {
+        struct MonitorAssignment {
+          int rxid;
+          double frequency;
+          Source *source;
+        };
+        std::vector<MonitorAssignment> assignments;
+        const std::vector<double> monitor_frequencies =
+            system->get_control_channels();
+        std::vector<DmrSignalingSourceCoverage> allowed_coverage;
+        for (Source *allowed_source : allowed_sources) {
+          allowed_coverage.push_back(
+              {allowed_source->get_min_hz(), allowed_source->get_max_hz()});
+        }
+
+        // Resolve every assignment before modifying the flowgraph. This
+        // prevents a partially configured system when one frequency is not
+        // covered by an allowed source.
+        for (size_t index = 0; index < monitor_frequencies.size(); ++index) {
+          const int source_index = find_dmr_signaling_source(
+              monitor_frequencies[index], allowed_coverage);
+          if (source_index < 0) {
+            BOOST_LOG_TRIVIAL(error)
+                << "[" << system->get_short_name()
+                << "]\tUnable to find an allowed source for Capacity Plus "
+                   "signaling monitor rxid " << index << " at "
+                << format_freq(monitor_frequencies[index]);
+            return false;
+          }
+          assignments.push_back(
+              {static_cast<int>(index), monitor_frequencies[index],
+               allowed_sources[source_index]});
+        }
+
+        if (assignments.empty()) {
+          BOOST_LOG_TRIVIAL(error) << "[" << system->get_short_name()
+                                   << "]\tNo Capacity Plus signaling frequencies configured";
+          return false;
+        }
+
+        system->dmr_signaling_monitors.clear();
+        system->dmr_signaling_monitors.reserve(assignments.size());
+        for (const MonitorAssignment &assignment : assignments) {
+          system->dmr_signaling_monitors.emplace_back(
+              assignment.rxid, assignment.frequency, assignment.source);
+          System_impl::DmrSignalingMonitor &monitor =
+              system->dmr_signaling_monitors.back();
+          monitor.decoder = make_dmr_trunking(
+              monitor.receive_frequency, monitor.source->get_center(),
+              monitor.source->get_rate(), system->get_msg_queue(), monitor.rxid);
+          tb->connect(monitor.source->get_src_block(), 0, monitor.decoder, 0);
+          BOOST_LOG_TRIVIAL(info)
+              << "[" << system->get_short_name()
+              << "]\tCapacity Plus signaling monitor rxid " << monitor.rxid
+              << " on " << format_freq(monitor.receive_frequency)
+              << " using source " << monitor.source->get_num();
+        }
+        system->set_source(assignments.front().source);
+        system_added = true;
+        continue;
       }
 
       for (Source *allowed_source : allowed_sources) {

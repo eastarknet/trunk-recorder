@@ -136,8 +136,38 @@ public:
   dmr_trunking_sptr dmr_trunking;
 
   // Trunked-DMR per-system state
+  struct DmrSignalingMonitor {
+    int rxid;
+    double receive_frequency;
+    Source *source;
+    dmr_trunking_sptr decoder;
+    long long last_capplus_activity;
+    long long last_non_timeout_activity;
+
+    DmrSignalingMonitor(int id, double frequency, Source *monitor_source)
+        : rxid(id), receive_frequency(frequency), source(monitor_source),
+          last_capplus_activity(0), last_non_timeout_activity(0) {}
+  };
+
+  bool capacity_plus_multi_frequency;
+  std::vector<DmrSignalingMonitor> dmr_signaling_monitors;
   std::map<int, double> lcn_freq_table;
   int dmr_rest_lsn;
+  long long dmr_capplus_last_activity;
+
+  // Capacity Plus rest-channel transition state.
+  double dmr_capplus_known_good_freq;
+  double dmr_capplus_pending_rest_freq;
+  long long dmr_capplus_pending_rest_first_seen;
+  int dmr_capplus_pending_rest_count;
+
+  bool dmr_capplus_probe_active;
+  double dmr_capplus_probe_previous_freq;
+  double dmr_capplus_probe_target_freq;
+  long long dmr_capplus_probe_started_at;
+  bool dmr_capplus_probe_saw_non_timeout;
+  bool dmr_capplus_probe_saw_valid;
+
   std::string dmr_variant;
 
   std::map<unsigned long, std::map<unsigned long, std::time_t>> talkgroup_patches;
@@ -347,6 +377,12 @@ public:
   double next_unmapped_channel() override;
   void set_dmr_rest_lsn(int lsn) override;
   int get_dmr_rest_lsn() override;
+  bool get_capacity_plus_multi_frequency() override;
+  void set_capacity_plus_multi_frequency(bool enabled) override;
+  bool resolve_dmr_monitor_frequency(int rxid, double &frequency) override;
+  void mark_dmr_capplus_activity(int rxid = -1) override;
+  void mark_dmr_capplus_non_timeout_activity(int rxid = -1) override;
+  long long get_dmr_capplus_last_activity() override;
   void set_dmr_rest_lcn(int lcn) override;
   int get_dmr_rest_lcn() override;
   void set_dmr_variant(const std::string &v) override;

@@ -36,10 +36,13 @@
 
 class Call;
 struct Transmission;
+class TransmissionSinkLifecycleTest;
 namespace gr {
 namespace blocks {
 
 class BLOCKS_API transmission_sink : virtual public sync_block {
+  friend class ::TransmissionSinkLifecycleTest;
+
 private:
   unsigned d_sample_rate;
   int d_nchans;
@@ -148,7 +151,7 @@ public:
   State get_state();
   time_t get_start_time();
   time_t get_stop_time();
-  std::chrono::time_point<std::chrono::steady_clock> get_last_write_time();
+  std::chrono::time_point<std::chrono::steady_clock> get_last_write_time() const;
 };
 
 } /* namespace blocks */

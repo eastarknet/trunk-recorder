@@ -369,6 +369,10 @@ bool load_config(string config_file, Config &config, gr::top_block_sptr &tb, std
           // candidate list (auto-mapped on first sighting of each LCN).
           // At least one of the two must be present.
           if (system->get_system_type() == "dmr") {
+            system->set_capacity_plus_multi_frequency(
+                element.value("capacityPlusMultiFrequency", false));
+            BOOST_LOG_TRIVIAL(info) << "Capacity Plus Multi-Frequency: "
+                                    << system->get_capacity_plus_multi_frequency();
             bool has_lcn_table = element.contains("lcnTable");
             bool has_channels  = element.contains("channels");
             if (!has_lcn_table && !has_channels) {

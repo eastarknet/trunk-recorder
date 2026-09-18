@@ -411,9 +411,50 @@ add_executable(capacity_plus_parser_test tests/capacity_plus_parser_test.cc)
 target_include_directories(capacity_plus_parser_test PRIVATE trunk-recorder)
 add_test(NAME capacity_plus_parser_test COMMAND capacity_plus_parser_test)
 
+add_executable(dmr_timeout_policy_test tests/dmr_timeout_policy_test.cc)
+add_test(NAME dmr_timeout_policy_test COMMAND dmr_timeout_policy_test)
+
 add_executable(dmr_metadata_pending_test tests/dmr_metadata_pending_test.cc)
 target_include_directories(dmr_metadata_pending_test PRIVATE lib/op25_repeater/lib)
 add_test(NAME dmr_metadata_pending_test COMMAND dmr_metadata_pending_test)
+
+add_executable(dmr_lifecycle_test tests/dmr_lifecycle_test.cc)
+target_include_directories(dmr_lifecycle_test PRIVATE trunk-recorder)
+target_link_libraries(dmr_lifecycle_test trunk_recorder_library gnuradio-op25_repeater
+  ${CMAKE_DL_LIBS} ssl crypto ${CURL_LIBRARIES} ${Boost_LIBRARIES}
+  ${GNURADIO_PMT_LIBRARIES} ${GNURADIO_RUNTIME_LIBRARIES}
+  ${GNURADIO_FILTER_LIBRARIES} ${GNURADIO_DIGITAL_LIBRARIES}
+  ${GNURADIO_ANALOG_LIBRARIES} ${GNURADIO_AUDIO_LIBRARIES}
+  ${GNURADIO_UHD_LIBRARIES} ${UHD_LIBRARIES}
+  ${GNURADIO_BLOCKS_LIBRARIES} ${GNURADIO_OSMOSDR_LIBRARIES})
+add_test(NAME dmr_lifecycle_test COMMAND dmr_lifecycle_test)
+if(NOT Gnuradio_VERSION VERSION_LESS "3.8")
+  target_link_libraries(dmr_lifecycle_test
+    gnuradio::gnuradio-analog
+    gnuradio::gnuradio-blocks
+    gnuradio::gnuradio-digital
+    gnuradio::gnuradio-filter
+    gnuradio::gnuradio-pmt)
+endif()
+
+add_executable(capacity_plus_multifrequency_test tests/capacity_plus_multifrequency_test.cc)
+target_include_directories(capacity_plus_multifrequency_test PRIVATE trunk-recorder)
+target_link_libraries(capacity_plus_multifrequency_test trunk_recorder_library gnuradio-op25_repeater
+  ${CMAKE_DL_LIBS} ssl crypto ${CURL_LIBRARIES} ${Boost_LIBRARIES}
+  ${GNURADIO_PMT_LIBRARIES} ${GNURADIO_RUNTIME_LIBRARIES}
+  ${GNURADIO_FILTER_LIBRARIES} ${GNURADIO_DIGITAL_LIBRARIES}
+  ${GNURADIO_ANALOG_LIBRARIES} ${GNURADIO_AUDIO_LIBRARIES}
+  ${GNURADIO_UHD_LIBRARIES} ${UHD_LIBRARIES}
+  ${GNURADIO_BLOCKS_LIBRARIES} ${GNURADIO_OSMOSDR_LIBRARIES})
+add_test(NAME capacity_plus_multifrequency_test COMMAND capacity_plus_multifrequency_test)
+if(NOT Gnuradio_VERSION VERSION_LESS "3.8")
+  target_link_libraries(capacity_plus_multifrequency_test
+    gnuradio::gnuradio-analog
+    gnuradio::gnuradio-blocks
+    gnuradio::gnuradio-digital
+    gnuradio::gnuradio-filter
+    gnuradio::gnuradio-pmt)
+endif()
 
 target_link_libraries(trunk-recorder git trunk_recorder_library gnuradio-op25_repeater   ${CMAKE_DL_LIBS} ssl crypto ${CURL_LIBRARIES} ${Boost_LIBRARIES} ${GNURADIO_PMT_LIBRARIES} ${GNURADIO_RUNTIME_LIBRARIES} ${GNURADIO_FILTER_LIBRARIES} ${GNURADIO_DIGITAL_LIBRARIES} ${GNURADIO_ANALOG_LIBRARIES} ${GNURADIO_AUDIO_LIBRARIES} ${GNURADIO_UHD_LIBRARIES} ${UHD_LIBRARIES} ${GNURADIO_BLOCKS_LIBRARIES} ${GNURADIO_OSMOSDR_LIBRARIES} ) # gRPC::grpc++_reflection protobuf::libprotobuf)
 

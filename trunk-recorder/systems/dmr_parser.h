@@ -35,7 +35,7 @@ public:
 private:
   std::vector<TrunkMessage> decode_csbk(const uint8_t *csbk, int slot, int rxid, System *system);
   std::vector<TrunkMessage> decode_cach_slc(const uint8_t *slc, int rxid, System *system);
-  std::vector<TrunkMessage> decode_vlc(const uint8_t *lc, int slot, System *system, bool terminator);
+  std::vector<TrunkMessage> decode_vlc(const uint8_t *lc, int slot, int rxid, System *system, bool terminator);
 
   // Map an LCN id to a Hz frequency using the system's lcn_freq_table.
   // Returns 0 if the LCN is not mapped (caller should drop the grant).

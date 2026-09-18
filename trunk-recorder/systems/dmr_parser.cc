@@ -114,6 +114,12 @@ std::vector<TrunkMessage> DmrParser::parse_message(gr::message::sptr msg, System
     return out;
   }
 
+  // A non-timeout OP25 DMR message is useful during a newly selected rest
+  // channel probe even when it is not yet valid Capacity Plus signaling.
+  if (system) {
+    system->mark_dmr_capplus_non_timeout_activity(rxid);
+  }
+
   switch (m_type) {
     case M_DMR_CACH_SLC:
       if (nbytes >= 4) {
@@ -128,19 +134,19 @@ std::vector<TrunkMessage> DmrParser::parse_message(gr::message::sptr msg, System
       break;
     case M_DMR_SLOT_VLC:
       if (nbytes >= 9) {
-        return decode_vlc(bytes, slot, system, /*terminator=*/false);
+        return decode_vlc(bytes, slot, rxid, system, /*terminator=*/false);
       }
       break;
     case M_DMR_SLOT_TLC:
       if (nbytes >= 9) {
-        return decode_vlc(bytes, slot, system, /*terminator=*/true);
+        return decode_vlc(bytes, slot, rxid, system, /*terminator=*/true);
       }
       break;
     case M_DMR_SLOT_ELC:
       // Embedded LC during a voice transmission — same layout as VLC, mostly
       // useful for refreshing src on long calls.
       if (nbytes >= 9) {
-        return decode_vlc(bytes, slot, system, /*terminator=*/false);
+        return decode_vlc(bytes, slot, rxid, system, /*terminator=*/false);
       }
       break;
     case M_DMR_SLOT_PI:
@@ -233,7 +239,10 @@ std::vector<TrunkMessage> DmrParser::decode_cach_slc(const uint8_t *slc, int rxi
                                    << " is not explicitly mapped; remaining on current frequency";
       }
     } else {
-      if (system) system->set_dmr_rest_lsn(rest_lsn);
+      if (system) {
+        system->set_dmr_rest_lsn(rest_lsn);
+        system->mark_dmr_capplus_activity(rxid);
+      }
       out.push_back(m);
     }
     return out;
@@ -346,7 +355,10 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
                                      << " is not explicitly mapped; remaining on current frequency";
         }
       } else {
-        if (system) system->set_dmr_rest_lsn(rest);
+        if (system) {
+          system->set_dmr_rest_lsn(rest);
+          system->mark_dmr_capplus_activity(rxid);
+        }
         out.push_back(m);
       }
       return out;
@@ -359,6 +371,7 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
     case 0x3E10: {  // Site Status
       const CapacityPlusSiteStatus status = decode_capacity_plus_site_status(d, 8);
       if (system) system->set_dmr_variant("capacity_plus");
+      bool valid_capacity_plus_activity = false;
 
       for (const CapacityPlusVoiceAssignment &assignment : status.voice_assignments) {
         const double freq = system ? system->get_lcn_freq(assignment.channel.lcn) : 0;
@@ -369,6 +382,7 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
                                      << assignment.channel.lcn << " is not explicitly mapped";
           continue;
         }
+        valid_capacity_plus_activity = true;
         TrunkMessage grant = blank_message(system);
         grant.message_type = GRANT;
         grant.opcode = key;
@@ -392,6 +406,7 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
         const double rest_freq = system ? system->get_lcn_freq(rest_channel.lcn) : 0;
         if (system) system->set_dmr_rest_lsn(status.rest_lsn);
         if (rest_freq != 0) {
+          valid_capacity_plus_activity = true;
           TrunkMessage rest = blank_message(system);
           rest.message_type = CAPACITY_PLUS_REST_CHANNEL;
           rest.opcode = key;
@@ -403,6 +418,7 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
              << " slot=" << rest_channel.tdma_slot
              << " freq=" << format_freq(rest_freq);
           rest.meta = os.str();
+          BOOST_LOG_TRIVIAL(debug) << "[" << short_name << "] " << rest.meta;
           out.push_back(rest); // Grants must be handled before this retune event.
         } else if (previous_rest_lsn != status.rest_lsn) {
           BOOST_LOG_TRIVIAL(warning) << "[" << short_name << "] Capacity Plus rest LCN "
@@ -413,6 +429,9 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
         BOOST_LOG_TRIVIAL(warning) << "[" << short_name
                                    << "] ignoring invalid Capacity Plus rest LSN "
                                    << status.rest_lsn;
+      }
+      if (valid_capacity_plus_activity && system) {
+        system->mark_dmr_capplus_activity(rxid);
       }
       return out;
     }
@@ -545,7 +564,7 @@ std::vector<TrunkMessage> DmrParser::decode_csbk(const uint8_t *csbk, int slot, 
 //
 // Wire layout: 9 bytes ([0]=PF/FLCO, [1]=FID, [2]=SVCOPT, [3..5]=dst,
 // [6..8]=src). Same shape across all variants.
-std::vector<TrunkMessage> DmrParser::decode_vlc(const uint8_t *lc, int slot, System *system, bool terminator) {
+std::vector<TrunkMessage> DmrParser::decode_vlc(const uint8_t *lc, int slot, int rxid, System *system, bool terminator) {
   std::vector<TrunkMessage> out;
   uint8_t flco = lc[0] & 0x3F;
   uint8_t fid  = lc[1];
@@ -562,6 +581,14 @@ std::vector<TrunkMessage> DmrParser::decode_vlc(const uint8_t *lc, int slot, Sys
   m.talkgroup = dst;
   m.source = src;
   m.tdma_slot = slot;
+  // VLC/TLC/ELC is decoded from the RF channel currently monitored by
+  // this DMR trunking decoder. Preserve that frequency on UPDATEs so
+  // they refresh the matching active call instead of creating a
+  // phantom zero-frequency call.
+  double receive_frequency = 0;
+  if (system && system->resolve_dmr_monitor_frequency(rxid, receive_frequency)) {
+    m.freq = receive_frequency;
+  }
   m.encrypted = (svc & 0x80) != 0;
   m.emergency = (svc & 0x40) != 0;
   m.opcode = ((uint16_t)flco << 8) | fid;

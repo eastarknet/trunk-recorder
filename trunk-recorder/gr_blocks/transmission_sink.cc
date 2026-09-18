@@ -66,17 +66,38 @@ transmission_sink::transmission_sink(int n_channels, unsigned int sample_rate, i
                  io_signature::make(0, 0, 0)),
       d_sample_rate(sample_rate),
       d_nchans(n_channels),
-      d_current_call(NULL),
-      d_fp(0) {
+      d_max_sample_val(0),
+      d_slot(-1),
+      d_min_sample_val(0),
+      d_normalize_shift(0),
+      d_normalize_fac(0),
+      d_conventional(false),
+      d_first_work(true),
+      d_termination_flag(false),
+      d_start_time(0),
+      d_stop_time(0),
+      d_start_time_ms(0),
+      d_stop_time_ms(0),
+      d_last_write_time(std::chrono::steady_clock::now()),
+      d_spike_count(0),
+      d_error_count(0),
+      curr_src_id(-1),
+      cached_src_id(-1),
+      d_current_color_code(static_cast<unsigned int>(-1)),
+      d_current_call(nullptr),
+      d_current_call_num(0),
+      d_current_call_freq(0.0),
+      d_prior_transmission_length(0.0),
+      d_current_call_talkgroup(0),
+      d_current_call_talkgroup_encoded(0),
+      d_sample_count(0),
+      d_bytes_per_sample(bits_per_sample / 8),
+      d_fp(nullptr),
+      state(AVAILABLE) {
 
   if ((bits_per_sample != 8) && (bits_per_sample != 16)) {
     throw std::runtime_error("Invalid bits per sample (supports 8 and 16)");
   }
-  d_bytes_per_sample = bits_per_sample / 8;
-  d_sample_count = 0;
-  d_slot = -1;
-  d_termination_flag = false;
-  state = AVAILABLE;
 }
 
 void transmission_sink::create_filename() {
@@ -128,9 +149,9 @@ const std::string &transmission_sink::get_filename() {
 }
 
 bool transmission_sink::start_recording(Call *call, int slot) {
+  const bool started = this->start_recording(call);
   this->d_slot = slot;
-  this->start_recording(call);
-  return true;
+  return started;
 }
 
 bool transmission_sink::start_recording(Call *call) {
@@ -139,6 +160,7 @@ bool transmission_sink::start_recording(Call *call) {
     BOOST_LOG_TRIVIAL(trace) << "Start() - Current_Call & fp are not null! current_filename is: " << current_filename << " Length: " << d_sample_count << std::endl;
   }
   d_current_call = call;
+  d_slot = -1;
   d_current_call_num = call->get_call_num();
   d_current_call_freq = call->get_freq();
   d_conventional = call->is_conventional();
@@ -158,6 +180,13 @@ bool transmission_sink::start_recording(Call *call) {
   }
   d_current_call_short_name = call->get_short_name();
   d_current_call_temp_dir = call->get_temp_dir();
+  d_start_time = 0;
+  d_stop_time = 0;
+  d_start_time_ms = 0;
+  d_stop_time_ms = 0;
+  d_first_work = true;
+  d_termination_flag = false;
+  current_filename.clear();
   d_prior_transmission_length = 0;
   d_error_count = 0;
   d_spike_count = 0;
@@ -362,23 +391,16 @@ State transmission_sink::get_state() {
 int transmission_sink::work(int noutput_items, gr_vector_const_void_star &input_items, gr_vector_void_star &output_items) {
 
   gr::thread::scoped_lock guard(d_mutex); // hold mutex for duration of this function
-  std::string loghdr = log_header(d_current_call_short_name,d_current_call_num,d_current_call_talkgroup_display,d_current_call_freq);
-  
+
   // it is possible that we could get part of a transmission after a call has stopped. We shouldn't do any recording if this happens.... this could mean that we miss part of the recording though
   if (!d_current_call) {
-    time_t now = time(NULL);
-    double its_been = difftime(now, d_stop_time);
-
-    // It is possible the P25 Frame Assembler passes a TDU after the call has timed out.
-    // In this case, the termination tag will be transferred on a blank sample and can safely be ignored.
-    if (noutput_items == 1) {
-      BOOST_LOG_TRIVIAL(trace) << loghdr << "Dropping " << noutput_items << " samples - current_call is null\t Rec State: " << format_state(this->state) << "\tSince close: " << its_been;
-    } else {
-      BOOST_LOG_TRIVIAL(error) << loghdr << "Dropping " << noutput_items << " samples - current_call is null\t Rec State: " << format_state(this->state) << "\tSince close: " << its_been;
-    }
-
+    // Permanently connected DMR slot sinks legitimately receive samples while
+    // unattached. Consume them without consulting stale call metadata or
+    // emitting a message for every scheduler buffer.
     return noutput_items;
   }
+
+  std::string loghdr = log_header(d_current_call_short_name,d_current_call_num,d_current_call_talkgroup_display,d_current_call_freq);
 
   // it is possible that we could get part of a transmission after a call has stopped. We shouldn't do any recording if this happens.... this could mean that we miss part of the recording though
   if ((state == STOPPED) || (state == AVAILABLE)) {
@@ -442,7 +464,7 @@ int transmission_sink::work(int noutput_items, gr_vector_const_void_star &input_
 
       if ((state == RECORDING) || (state == IDLE)) {
         if (cc != d_current_color_code) {
-          if (d_current_call->get_system_type() == "conventionalDMR") {
+          if (d_current_call->get_system_type() == "conventionalDMR" || d_current_call->get_system_type() == "dmr") {
             d_current_color_code = cc;
             BOOST_LOG_TRIVIAL(info) << loghdr << "DMR Color Code set to: " << d_current_color_code << " Recorder state: " << format_state(state);
           } 
@@ -518,7 +540,7 @@ time_t transmission_sink::get_stop_time() {
   return d_stop_time;
 }
 
-std::chrono::time_point<std::chrono::steady_clock> transmission_sink::get_last_write_time() {
+std::chrono::time_point<std::chrono::steady_clock> transmission_sink::get_last_write_time() const {
   return d_last_write_time;
 }
 

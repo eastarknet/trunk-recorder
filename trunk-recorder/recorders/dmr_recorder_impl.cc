@@ -316,7 +316,10 @@ bool dmr_recorder_impl::is_idle(int slot) {
 }
 
 double dmr_recorder_impl::since_last_write(int slot) {
-  return time(NULL) - slots[slot].wav_sink->get_stop_time();
+  const auto now = std::chrono::steady_clock::now();
+  const std::chrono::duration<double> inactivity =
+      now - slots[slot].wav_sink->get_last_write_time();
+  return inactivity.count();
 }
 
 double dmr_recorder_impl::get_current_length(int slot) {
