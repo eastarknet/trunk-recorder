@@ -44,6 +44,8 @@ class BLOCKS_API transmission_sink : virtual public sync_block {
   friend class ::TransmissionSinkLifecycleTest;
 
 private:
+  bool start_recording_locked(Call *call, int slot);
+
   unsigned d_sample_rate;
   int d_nchans;
   int d_max_sample_val;

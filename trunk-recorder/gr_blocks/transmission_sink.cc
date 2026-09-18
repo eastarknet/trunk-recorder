@@ -149,18 +149,21 @@ const std::string &transmission_sink::get_filename() {
 }
 
 bool transmission_sink::start_recording(Call *call, int slot) {
-  const bool started = this->start_recording(call);
-  this->d_slot = slot;
-  return started;
+  gr::thread::scoped_lock guard(d_mutex);
+  return start_recording_locked(call, slot);
 }
 
 bool transmission_sink::start_recording(Call *call) {
   gr::thread::scoped_lock guard(d_mutex);
+  return start_recording_locked(call, -1);
+}
+
+bool transmission_sink::start_recording_locked(Call *call, int slot) {
   if (d_current_call && d_fp) {
     BOOST_LOG_TRIVIAL(trace) << "Start() - Current_Call & fp are not null! current_filename is: " << current_filename << " Length: " << d_sample_count << std::endl;
   }
   d_current_call = call;
-  d_slot = -1;
+  d_slot = slot;
   d_current_call_num = call->get_call_num();
   d_current_call_freq = call->get_freq();
   d_conventional = call->is_conventional();

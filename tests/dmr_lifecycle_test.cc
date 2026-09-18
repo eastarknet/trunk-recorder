@@ -198,9 +198,9 @@ int main() {
   const std::string first_filename = sink->get_filename();
   sink->stop_recording();
   FakeCall second_call(17, 155175000.0, temp_dir);
-  sink->start_recording(&second_call, 0);
-  expect(TransmissionSinkLifecycleTest::attachment_reset(*sink, &second_call, 0),
-         "reused sink does not inherit prior transmission lifecycle values");
+  sink->start_recording(&second_call, 1);
+  expect(TransmissionSinkLifecycleTest::attachment_reset(*sink, &second_call, 1),
+         "reused sink atomically attaches the requested alternate slot");
   sink->stop_recording();
   expect(sink->work(480, empty_input, no_output) == 480,
          "reused unattached sink continues to drop samples safely");
