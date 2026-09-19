@@ -18,13 +18,41 @@ void expect(bool condition, const char *description) {
   }
 }
 
-gr::message::sptr dmr_message(int type, int rxid, int slot,
-                              const std::vector<uint8_t> &payload) {
-  const long packed_type = (1L << 16) | type;
-  const long packed_rxid = (rxid << 1) | slot;
+gr::message::sptr dmr_message(
+    int type, int rxid, int slot,
+    const std::vector<uint8_t> &payload,
+    int cc = -1, int crc_status = -1) {
+  const long packed_type =
+      (1L << 16) | type;
+
+  uint64_t packed_rxid =
+      static_cast<uint64_t>(
+          static_cast<uint32_t>(
+              (rxid << 1) | slot));
+
+  if (cc >= 0 && cc <= 15) {
+    packed_rxid |= (1ULL << 36);
+    packed_rxid |=
+        (static_cast<uint64_t>(
+             cc & 0x0f)
+         << 32);
+  }
+
+  if (crc_status >= 0) {
+    packed_rxid |= (1ULL << 37);
+
+    if (crc_status != 0)
+      packed_rxid |= (1ULL << 38);
+  }
+
   return gr::message::make_from_string(
-      std::string(reinterpret_cast<const char *>(payload.data()), payload.size()),
-      packed_type, packed_rxid, 0);
+      std::string(
+          reinterpret_cast<const char *>(
+              payload.data()),
+          payload.size()),
+      packed_type,
+      static_cast<long>(packed_rxid),
+      0);
 }
 }  // namespace
 
@@ -106,6 +134,40 @@ int main() {
   messages = parser.parse_message(dmr_message(3, 9, 0, vlc), &system);
   expect(messages.size() == 1 && messages[0].freq == 0,
          "unknown rxid does not receive a random parser frequency");
+
+  const std::vector<uint8_t> tier3_aloha_csbk = {
+      0x19, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00};
+
+  messages = parser.parse_message(
+      dmr_message(
+          5, 1, 0,
+          tier3_aloha_csbk, 9, 1),
+      &system);
+
+  expect(
+      messages.size() == 1,
+      "CRC-ok CSBK remains accepted");
+
+  messages = parser.parse_message(
+      dmr_message(
+          5, 1, 0,
+          tier3_aloha_csbk, 9, -1),
+      &system);
+
+  expect(
+      messages.size() == 1,
+      "CRC-unknown CSBK remains accepted for compatibility");
+
+  messages = parser.parse_message(
+      dmr_message(
+          5, 1, 0,
+          tier3_aloha_csbk, 9, 0),
+      &system);
+
+  expect(
+      messages.empty(),
+      "CRC-fail CSBK is rejected before decoding");
 
   system.mark_dmr_capplus_activity(1);
   expect(system.dmr_signaling_monitors[0].last_capplus_activity == 0 &&

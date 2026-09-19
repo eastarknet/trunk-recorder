@@ -80,11 +80,35 @@ dmr_slot::~dmr_slot() {
 }
 
 void
-dmr_slot::send_msg(const std::string& m_buf, const int m_type) {
+dmr_slot::send_msg(const std::string& m_buf, const int m_type,
+                   const int crc_status) {
 	if ((d_msgq_id < 0) || (d_msg_queue->full_p()))
 		return;
 
-	gr::message::sptr msg = gr::message::make_from_string(m_buf, get_msg_type(PROTOCOL_DMR, m_type), ((d_msgq_id << 1) + (d_chan & 0x1)), logts.get_ts());
+	uint64_t packed_arg1 =
+		static_cast<uint64_t>(
+			static_cast<uint32_t>(
+				(d_msgq_id << 1) + (d_chan & 0x1)));
+
+	if (m_type == M_DMR_SLOT_CSBK) {
+		packed_arg1 |= (1ULL << 36);
+		packed_arg1 |=
+			(static_cast<uint64_t>(d_cc & 0x0f) << 32);
+	}
+
+	if (crc_status >= 0) {
+		packed_arg1 |= (1ULL << 37);
+		if (crc_status != 0)
+			packed_arg1 |= (1ULL << 38);
+	}
+
+	gr::message::sptr msg =
+		gr::message::make_from_string(
+			m_buf,
+			get_msg_type(PROTOCOL_DMR, m_type),
+			static_cast<long>(packed_arg1),
+			logts.get_ts());
+
 	if (!d_msg_queue->full_p())
 	    d_msg_queue->insert_tail(msg);
 }
@@ -255,11 +279,16 @@ dmr_slot::decode_slot_type() {
 
 bool
 dmr_slot::decode_csbk(uint8_t* csbk) {
-	// Apply mask and validate CRC
+	// Apply the CSBK CRC mask and always calculate the result.
+	// Global OP25 CRC enforcement remains unchanged; Trunk Recorder
+	// makes the narrow decision for CSBK messages only.
 	for (int i = 0; i < 16; i++)
 		csbk[i+80] ^= CSBK_CRC_MASK[i];
+
+	const bool csbk_crc_ok = (crc16(csbk, 96) == 0);
+
 #if _CRC_CHECK_
-	if (crc16(csbk, 96) != 0)
+	if (!csbk_crc_ok)
 		return false;
 #endif
 
@@ -268,7 +297,7 @@ dmr_slot::decode_csbk(uint8_t* csbk) {
 	for (int i = 0; i < 80; i++) {
 		csbk_msg[i/8] = (csbk_msg[i/8] << 1) + csbk[i];
 	}
-	send_msg(csbk_msg, M_DMR_SLOT_CSBK);
+	send_msg(csbk_msg, M_DMR_SLOT_CSBK, csbk_crc_ok ? 1 : 0);
 
 	// Extract parameters for logging purposes
 	uint8_t  csbk_lb   = csbk[0] & 0x1;

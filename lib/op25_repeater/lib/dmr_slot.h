@@ -113,7 +113,7 @@ private:
 	ezpwd::RS<255,252> rs12;	// Reed-Solomon(12,9) object for Link Control decode
 	gr::msg_queue::sptr d_msg_queue;
 
-	void send_msg(const std::string& m_buf, const int m_type);
+	void send_msg(const std::string& m_buf, const int m_type, const int crc_status = -1);
 	bool decode_slot_type();
 	bool decode_csbk(uint8_t* csbk);
 	bool decode_mbc_header(uint8_t* mbc);

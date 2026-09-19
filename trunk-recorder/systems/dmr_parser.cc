@@ -39,7 +39,33 @@ static std::string hex_dump(const uint8_t *p, size_t n) {
   return os.str();
 }
 
-DmrParser::DmrParser() {}
+static std::string dmr_csbk_reject_context(
+    System *system, int rxid, int cc) {
+  std::ostringstream os;
+  os << "rxid=" << rxid;
+
+  double rx_freq = 0;
+  if (system &&
+      system->resolve_dmr_monitor_frequency(
+          rxid, rx_freq)) {
+    os << " rx_freq="
+       << std::fixed
+       << std::setprecision(6)
+       << (rx_freq / 1000000.0)
+       << " MHz";
+  } else {
+    os << " rx_freq=unknown";
+  }
+
+  if (cc >= 0)
+    os << " cc=" << cc;
+  else
+    os << " cc=unknown";
+
+  return os.str();
+}
+
+DmrParser::DmrParser() : csbk_crc_failures_(0) {}
 
 TrunkMessage DmrParser::blank_message(System *system) {
   TrunkMessage m;
@@ -99,8 +125,35 @@ std::vector<TrunkMessage> DmrParser::parse_message(gr::message::sptr msg, System
   //              arg1() = (rxid << 1) | slot
   int16_t m_proto = (int16_t)((msg->type() >> 16) & 0xFFFF);
   int16_t m_type  = (int16_t)( msg->type()        & 0xFFFF);
-  int rxid = ((int)msg->arg1()) >> 1;
-  int slot = ((int)msg->arg1()) & 0x1;
+  const uint64_t packed_arg1 =
+      static_cast<uint64_t>(msg->arg1());
+
+  const uint32_t legacy_arg1 =
+      static_cast<uint32_t>(
+          packed_arg1 & 0xffffffffULL);
+
+  const bool cc_present =
+      (packed_arg1 & (1ULL << 36)) != 0;
+
+  const int cc = cc_present
+      ? static_cast<int>(
+            (packed_arg1 >> 32) & 0x0fULL)
+      : -1;
+
+  const bool crc_present =
+      (packed_arg1 & (1ULL << 37)) != 0;
+
+  const int crc_status = crc_present
+      ? ((packed_arg1 & (1ULL << 38)) != 0
+             ? 1
+             : 0)
+      : -1;
+
+  int rxid =
+      static_cast<int>(legacy_arg1 >> 1);
+
+  int slot =
+      static_cast<int>(legacy_arg1 & 0x1U);
   std::string buf = msg->to_string();
   const uint8_t *bytes = reinterpret_cast<const uint8_t *>(buf.data());
   size_t nbytes = buf.size();
@@ -127,9 +180,40 @@ std::vector<TrunkMessage> DmrParser::parse_message(gr::message::sptr msg, System
       }
       break;
     case M_DMR_SLOT_CSBK:
+      if (nbytes >= 10) {
+        if (crc_status == 0) {
+          ++csbk_crc_failures_;
+
+          // Log the first rejected CSBK and every 100th
+          // thereafter without flooding the journal.
+          if (csbk_crc_failures_ == 1 ||
+              (csbk_crc_failures_ % 100) == 0) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "["
+                << (system
+                        ? system->get_short_name()
+                        : "dmr")
+                << "] DMR_CSBK_CRC_REJECT "
+                << dmr_csbk_reject_context(
+                       system, rxid, cc)
+                << " crc=fail"
+                << " count="
+                << csbk_crc_failures_
+                << " action=drop_crc_fail";
+          }
+
+          return out;
+        }
+
+        return decode_csbk(
+            bytes, slot, rxid, system);
+      }
+      break;
+
     case M_DMR_SLOT_MBC:
       if (nbytes >= 10) {
-        return decode_csbk(bytes, slot, rxid, system);
+        return decode_csbk(
+            bytes, slot, rxid, system);
       }
       break;
     case M_DMR_SLOT_VLC:

@@ -12,9 +12,9 @@ class System;
 // DmrParser turns the OP25 DMR messages emitted by frame_assembler (CACH SLC,
 // CSBK, MBC, VLC, TLC, ELC, PI) into trunk-recorder TrunkMessages.
 //
-// It is *stateless across messages* — anything that has to persist (current
-// CC frequency, rest-channel LSN, observed variant) lives on System. The
-// parser only translates one wire-format event at a time.
+// Protocol state that has to persist (current CC frequency, rest-channel
+// LSN, observed variant) lives on System. DmrParser retains only diagnostic
+// counters used for rate-limited integrity-rejection logging.
 //
 // Variants understood today:
 //   * ETSI Tier III / MOTOTRBO Capacity Max: standard CSBKOs 0x19, 0x28,
@@ -33,6 +33,8 @@ public:
   std::vector<TrunkMessage> parse_message(gr::message::sptr msg, System *system);
 
 private:
+  uint64_t csbk_crc_failures_;
+
   std::vector<TrunkMessage> decode_csbk(const uint8_t *csbk, int slot, int rxid, System *system);
   std::vector<TrunkMessage> decode_cach_slc(const uint8_t *slc, int rxid, System *system);
   std::vector<TrunkMessage> decode_vlc(const uint8_t *lc, int slot, int rxid, System *system, bool terminator);
