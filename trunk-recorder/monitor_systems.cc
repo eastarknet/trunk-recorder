@@ -94,7 +94,30 @@ bool manage_multisite_rescue_attempts(std::vector<Call *> &calls) {
     Call *original = find_call_by_num(calls, it->first);
     Call *candidate = find_call_by_num(calls, it->second.candidate_call_num);
 
-    if (!original || !candidate) {
+    // The normal call lifecycle may conclude and delete the primary between
+    // rescue-management passes. Do not orphan a still-recording provisional
+    // candidate: explicitly discard it before forgetting the rescue attempt.
+    if (!original) {
+      if (candidate && candidate->get_state() == RECORDING) {
+        std::string loghdr = log_header(candidate->get_short_name(),
+                                        candidate->get_call_num(),
+                                        candidate->get_talkgroup_display(),
+                                        candidate->get_freq());
+        BOOST_LOG_TRIVIAL(info)
+            << loghdr
+            << "[MULTISITE-RESCUE] Primary call "
+            << it->first
+            << " no longer exists; discarding provisional candidate.";
+        discard_multisite_rescue_candidate(candidate);
+        state_changed = true;
+      }
+      it = multisite_rescue_attempts.erase(it);
+      continue;
+    }
+
+    // If the candidate has already been removed by another lifecycle path,
+    // there is nothing left to manage for this rescue attempt.
+    if (!candidate) {
       it = multisite_rescue_attempts.erase(it);
       continue;
     }
@@ -297,8 +320,7 @@ bool start_recorder(Call *call, TrunkMessage message, Config &config, System *sy
     }
   }
 
-  for (Source *source : candidate_sources) {
-    recorder = nullptr;
+  for (Source *source : candidate_sources) {    recorder = nullptr;
     call->set_is_analog(false);
 
     if (talkgroup) {
@@ -597,8 +619,7 @@ void unit_call_alert(System *sys, long source_id, long talkgroup) {
 }
 
 void unit_location(System *sys, long source_id, long talkgroup_num) {
-  plugman_unit_location(sys, source_id, talkgroup_num);
-}
+  plugman_unit_location(sys, source_id, talkgroup_num);}
 
 
 
@@ -897,8 +918,7 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
 
     case UPDATE:
       if (config.new_call_from_update) {
-        // Treat UPDATE as a GRANT and start a new call if we don't have one for this TG
-        handle_call_grant(message, sys, false, config, sources, calls);
+        // Treat UPDATE as a GRANT and start a new call if we don't have one for this TG        handle_call_grant(message, sys, false, config, sources, calls);
       } else {
         // Treat UPDATE as an UPDATE and only update existing calls
         handle_call_update(message, sys, calls);
@@ -1197,7 +1217,6 @@ bool retune_system_to_frequency(System *sys, double control_channel_freq, gr::to
                 BOOST_LOG_TRIVIAL(error)
                     << "\t - P25 selector has no input for Source "
                     << source->get_num();
-
                 source_found = false;
                 break;
               }
@@ -1598,24 +1617,3 @@ int monitor_messages(Config &config, gr::top_block_sptr &tb, std::vector<Source 
         if (!source->got_samples()) {
           BOOST_LOG_TRIVIAL(error) << "Source " << source->get_num() << " has stopped receiving samples - Terminating trunk recorder";
           exit_code = EXIT_FAILURE;
-          exit_flag = 1;
-          break;
-        }
-      }
-      last_decode_rate_check = current_time;
-      for (vector<System *>::iterator sys_it = systems.begin(); sys_it != systems.end(); sys_it++) {
-        System *system = *sys_it;
-        if (system->get_system_type() == "p25") {
-          system->clear_stale_talkgroup_patches();
-        }
-      }
-    }
-
-    float print_status_time_diff = current_time - last_status_time;
-
-    if (print_status_time_diff > 200) {
-      last_status_time = current_time;
-      print_status(sources, systems, calls);
-    }
-  }
-}
