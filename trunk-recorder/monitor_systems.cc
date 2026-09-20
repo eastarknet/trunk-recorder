@@ -70,6 +70,8 @@ void discard_multisite_rescue_candidate(Call *candidate) {
     return;
   }
 
+  Recorder *recorder = candidate->get_recorder();
+
   // Reuse the existing SUPERSEDED cleanup path so any provisional files are
   // removed without emitting an empty call to plugins. Expose the surviving
   // object as DUPLICATE after the recorder has been stopped.
@@ -77,6 +79,10 @@ void discard_multisite_rescue_candidate(Call *candidate) {
   candidate->set_monitoring_state(SUPERSEDED);
   candidate->conclude_call();
   candidate->set_monitoring_state(DUPLICATE);
+
+  if (recorder) {
+    plugman_setup_recorder(recorder);
+  }
 }
 
 bool manage_multisite_rescue_attempts(std::vector<Call *> &calls) {
@@ -161,9 +167,13 @@ bool manage_multisite_rescue_attempts(std::vector<Call *> &calls) {
           << original->get_short_name() << " call "
           << original->get_call_num() << ".";
 
+      Recorder *original_recorder = original->get_recorder();
       original->set_state(MONITORING);
       original->set_monitoring_state(SUPERSEDED);
       original->conclude_call();
+      if (original_recorder) {
+        plugman_setup_recorder(original_recorder);
+      }
       state_changed = true;
     } else if (decision == MultiSiteRescueDecision::ABANDON_CANDIDATE) {
       BOOST_LOG_TRIVIAL(info)
