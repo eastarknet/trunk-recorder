@@ -414,6 +414,9 @@ add_test(NAME capacity_plus_parser_test COMMAND capacity_plus_parser_test)
 add_executable(dmr_timeout_policy_test tests/dmr_timeout_policy_test.cc)
 add_test(NAME dmr_timeout_policy_test COMMAND dmr_timeout_policy_test)
 
+add_executable(multisite_rescue_policy_test tests/multisite_rescue_policy_test.cc)
+add_test(NAME multisite_rescue_policy_test COMMAND multisite_rescue_policy_test)
+
 add_executable(dmr_metadata_pending_test tests/dmr_metadata_pending_test.cc)
 target_include_directories(dmr_metadata_pending_test PRIVATE lib/op25_repeater/lib)
 add_test(NAME dmr_metadata_pending_test COMMAND dmr_metadata_pending_test)
