@@ -320,7 +320,8 @@ bool start_recorder(Call *call, TrunkMessage message, Config &config, System *sy
     }
   }
 
-  for (Source *source : candidate_sources) {    recorder = nullptr;
+  for (Source *source : candidate_sources) {
+    recorder = nullptr;
     call->set_is_analog(false);
 
     if (talkgroup) {
@@ -619,7 +620,8 @@ void unit_call_alert(System *sys, long source_id, long talkgroup) {
 }
 
 void unit_location(System *sys, long source_id, long talkgroup_num) {
-  plugman_unit_location(sys, source_id, talkgroup_num);}
+  plugman_unit_location(sys, source_id, talkgroup_num);
+}
 
 
 
@@ -918,7 +920,8 @@ void handle_message(std::vector<TrunkMessage> messages, System *sys, Config &con
 
     case UPDATE:
       if (config.new_call_from_update) {
-        // Treat UPDATE as a GRANT and start a new call if we don't have one for this TG        handle_call_grant(message, sys, false, config, sources, calls);
+        // Treat UPDATE as a GRANT and start a new call if we don't have one for this TG
+        handle_call_grant(message, sys, false, config, sources, calls);
       } else {
         // Treat UPDATE as an UPDATE and only update existing calls
         handle_call_update(message, sys, calls);
@@ -1617,3 +1620,24 @@ int monitor_messages(Config &config, gr::top_block_sptr &tb, std::vector<Source 
         if (!source->got_samples()) {
           BOOST_LOG_TRIVIAL(error) << "Source " << source->get_num() << " has stopped receiving samples - Terminating trunk recorder";
           exit_code = EXIT_FAILURE;
+          exit_flag = 1;
+          break;
+        }
+      }
+      last_decode_rate_check = current_time;
+      for (vector<System *>::iterator sys_it = systems.begin(); sys_it != systems.end(); sys_it++) {
+        System *system = *sys_it;
+        if (system->get_system_type() == "p25") {
+          system->clear_stale_talkgroup_patches();
+        }
+      }
+    }
+
+    float print_status_time_diff = current_time - last_status_time;
+
+    if (print_status_time_diff > 200) {
+      last_status_time = current_time;
+      print_status(sources, systems, calls);
+    }
+  }
+}
