@@ -4,6 +4,7 @@
 #include "systems/capacity_plus_parser.h"
 #include "systems/dmr_parser.h"
 #include "dmr_timeout_policy.h"
+#include "multisite_rescue_policy.h"
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -31,6 +32,161 @@ uint64_t time_since_epoch_millisec() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
+
+namespace {
+
+struct MultiSiteRescueAttempt {
+  long candidate_call_num;
+  std::chrono::steady_clock::time_point started;
+};
+
+std::map<long, MultiSiteRescueAttempt> multisite_rescue_attempts;
+
+Call *find_call_by_num(std::vector<Call *> &calls, long call_num) {
+  for (Call *call : calls) {
+    if (call && call->get_call_num() == call_num) {
+      return call;
+    }
+  }
+  return nullptr;
+}
+
+bool is_multisite_rescue_candidate(long call_num) {
+  for (const auto &entry : multisite_rescue_attempts) {
+    if (entry.second.candidate_call_num == call_num) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool has_active_multisite_rescue(long original_call_num) {
+  return multisite_rescue_attempts.find(original_call_num) !=
+         multisite_rescue_attempts.end();
+}
+
+void discard_multisite_rescue_candidate(Call *candidate) {
+  if (!candidate || candidate->get_state() != RECORDING) {
+    return;
+  }
+
+  // Reuse the existing SUPERSEDED cleanup path so any provisional files are
+  // removed without emitting an empty call to plugins. Expose the surviving
+  // object as DUPLICATE after the recorder has been stopped.
+  candidate->set_state(MONITORING);
+  candidate->set_monitoring_state(SUPERSEDED);
+  candidate->conclude_call();
+  candidate->set_monitoring_state(DUPLICATE);
+}
+
+bool manage_multisite_rescue_attempts(std::vector<Call *> &calls) {
+  bool state_changed = false;
+  const auto now = std::chrono::steady_clock::now();
+
+  for (auto it = multisite_rescue_attempts.begin();
+       it != multisite_rescue_attempts.end();) {
+    Call *original = find_call_by_num(calls, it->first);
+    Call *candidate = find_call_by_num(calls, it->second.candidate_call_num);
+
+    if (!original || !candidate) {
+      it = multisite_rescue_attempts.erase(it);
+      continue;
+    }
+
+    // If some other lifecycle path already retired the primary, this rescue
+    // attempt is no longer authoritative. Drop the provisional candidate.
+    if (original->get_state() != RECORDING) {
+      if (candidate->get_state() == RECORDING) {
+        std::string loghdr = log_header(candidate->get_short_name(),
+                                        candidate->get_call_num(),
+                                        candidate->get_talkgroup_display(),
+                                        candidate->get_freq());
+        BOOST_LOG_TRIVIAL(info)
+            << loghdr
+            << "[MULTISITE-RESCUE] Primary call "
+            << original->get_call_num()
+            << " is no longer recording; discarding provisional candidate.";
+        discard_multisite_rescue_candidate(candidate);
+        state_changed = true;
+      }
+      it = multisite_rescue_attempts.erase(it);
+      continue;
+    }
+
+    if (candidate->get_state() != RECORDING) {
+      it = multisite_rescue_attempts.erase(it);
+      continue;
+    }
+
+    const double primary_audio_length = original->get_current_length();
+    const double candidate_audio_length = candidate->get_current_length();
+    const auto candidate_age_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - it->second.started)
+            .count();
+
+    const MultiSiteRescueDecision decision =
+        evaluate_multisite_rescue(primary_audio_length,
+                                  candidate_audio_length,
+                                  candidate_age_ms);
+
+    if (decision == MultiSiteRescueDecision::PENDING) {
+      ++it;
+      continue;
+    }
+
+    std::string loghdr = log_header(candidate->get_short_name(),
+                                    candidate->get_call_num(),
+                                    candidate->get_talkgroup_display(),
+                                    candidate->get_freq());
+
+    if (decision == MultiSiteRescueDecision::KEEP_PRIMARY) {
+      BOOST_LOG_TRIVIAL(info)
+          << loghdr
+          << "[MULTISITE-RESCUE] Primary "
+          << original->get_short_name() << " call "
+          << original->get_call_num() << " began writing audio ("
+          << primary_audio_length << "s); discarding candidate "
+          << candidate->get_short_name() << " call "
+          << candidate->get_call_num() << ".";
+      discard_multisite_rescue_candidate(candidate);
+      state_changed = true;
+    } else if (decision == MultiSiteRescueDecision::PROMOTE_CANDIDATE) {
+      BOOST_LOG_TRIVIAL(info)
+          << loghdr
+          << "[MULTISITE-RESCUE] Candidate "
+          << candidate->get_short_name() << " call "
+          << candidate->get_call_num() << " produced audio ("
+          << candidate_audio_length << "s); promoting it and retiring silent primary "
+          << original->get_short_name() << " call "
+          << original->get_call_num() << ".";
+
+      original->set_state(MONITORING);
+      original->set_monitoring_state(SUPERSEDED);
+      original->conclude_call();
+      state_changed = true;
+    } else if (decision == MultiSiteRescueDecision::ABANDON_CANDIDATE) {
+      BOOST_LOG_TRIVIAL(info)
+          << loghdr
+          << "[MULTISITE-RESCUE] Candidate "
+          << candidate->get_short_name() << " call "
+          << candidate->get_call_num()
+          << " produced no audio within "
+          << MULTISITE_RESCUE_CANDIDATE_TIMEOUT_MS
+          << "ms; keeping silent primary "
+          << original->get_short_name() << " call "
+          << original->get_call_num() << ".";
+      discard_multisite_rescue_candidate(candidate);
+      state_changed = true;
+    }
+
+    it = multisite_rescue_attempts.erase(it);
+  }
+
+  return state_changed;
+}
+
+} // namespace
 
 bool start_recorder(Call *call, TrunkMessage message, Config &config, System *sys, std::vector<Source *> &sources) {
   Talkgroup *talkgroup = sys->find_talkgroup(call->get_talkgroup());
@@ -334,7 +490,7 @@ void manage_conventional_call(Call *call, Config &config) {
 }
 
 void manage_calls(Config &config, std::vector<Call *> &calls) {
-  bool ended_call = false;
+  bool ended_call = manage_multisite_rescue_attempts(calls);
   for (vector<Call *>::iterator it = calls.begin(); it != calls.end();) {
     Call *call = *it;
     State state = call->get_state();
@@ -441,9 +597,10 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
   bool call_found = false;
   bool duplicate_grant = false;
   bool superseding_grant = false;
+  bool rescue_grant = false;
   bool recording_started [[maybe_unused]] = false;
 
-  Call *original_call;
+  Call *original_call = nullptr;
 
   /* Notes: it is possible for 2 Calls to exist for the same talkgroup on different freq. This happens when a Talkgroup starts on a freq
   that current recorder can't retune to. In this case, the current orig Talkgroup reocrder will keep going on the old freq, while a new
@@ -493,7 +650,8 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
             sys_rfss_site = sys->get_sys_rfss() * 10000 + sys->get_sys_site_id();
             call_rfss_site = call->get_system()->get_sys_rfss() * 10000 + call->get_system()->get_sys_site_id();
             if ((sys_rfss_site != call_rfss_site) && (call->get_system()->get_multiSiteSystemName() == "")) {
-              if (call->get_state() == RECORDING) {
+              if ((call->get_state() == RECORDING) &&
+                  !is_multisite_rescue_candidate(call->get_call_num())) {
 
                 duplicate_grant = true;
                 original_call = call;
@@ -518,7 +676,8 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
             // We already know that Call's system number does not match the message system number.
             // In this case, we check that the multiSiteSystemName is present, and that the Call and System multiSiteSystemNames are the same.
             else if ((call->get_system()->get_multiSiteSystemName() != "") && (call->get_system()->get_multiSiteSystemName() == sys->get_multiSiteSystemName())) {
-              if (call->get_state() == RECORDING) {
+              if ((call->get_state() == RECORDING) &&
+                  !is_multisite_rescue_candidate(call->get_call_num())) {
 
                 duplicate_grant = true;
                 original_call = call;
@@ -564,6 +723,28 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
     it++;
   }
 
+  // Version 1 rescue is intentionally narrow: P25 only, only when the current
+  // multisite winner has produced absolutely no audio after a grace period,
+  // and only one provisional candidate at a time for that primary call.
+  if (!call_found && duplicate_grant && !superseding_grant &&
+      original_call != nullptr &&
+      original_call->get_system_type() == "p25" &&
+      sys->get_system_type() == "p25" &&
+      !has_active_multisite_rescue(original_call->get_call_num())) {
+    const std::int64_t now_ms =
+        static_cast<std::int64_t>(time_since_epoch_millisec());
+    const std::int64_t start_ms = original_call->get_start_time_ms();
+    const std::int64_t primary_age_ms =
+        (start_ms > 0 && now_ms >= start_ms) ? (now_ms - start_ms) : 0;
+
+    if (should_start_multisite_rescue(
+            original_call->get_current_length(),
+            original_call->since_last_voice_update(),
+            primary_age_ms)) {
+      rescue_grant = true;
+    }
+  }
+
   if (!call_found) {
     Call *call = Call::make(message, sys, config);
 
@@ -602,6 +783,40 @@ void handle_call_grant(TrunkMessage message, System *sys, bool grant_message, Co
       } else {
 
         BOOST_LOG_TRIVIAL(info) << loghdr << "\u001b[36mCould not start Superseding recorder.\u001b[0m Continuing original call: " << original_call->get_call_num() << "C";
+      }
+    } else if (rescue_grant) {
+      std::string loghdr = log_header(call->get_short_name(),
+                                      call->get_call_num(),
+                                      call->get_talkgroup_display(),
+                                      call->get_freq());
+      BOOST_LOG_TRIVIAL(info)
+          << loghdr
+          << "[MULTISITE-RESCUE] Silent primary "
+          << original_call->get_short_name() << " call "
+          << original_call->get_call_num()
+          << " has produced no audio after "
+          << (static_cast<std::int64_t>(time_since_epoch_millisec()) -
+              original_call->get_start_time_ms())
+          << "ms; starting provisional candidate "
+          << call->get_short_name() << " call "
+          << call->get_call_num() << ".";
+
+      recording_started = start_recorder(call, message, config, sys, sources);
+
+      if (recording_started) {
+        multisite_rescue_attempts[original_call->get_call_num()] = {
+            call->get_call_num(), std::chrono::steady_clock::now()};
+        BOOST_LOG_TRIVIAL(info)
+            << loghdr
+            << "[MULTISITE-RESCUE] Candidate recorder started; primary remains active until one recorder proves audio.";
+      } else {
+        call->set_state(MONITORING);
+        call->set_monitoring_state(DUPLICATE);
+        BOOST_LOG_TRIVIAL(info)
+            << loghdr
+            << "[MULTISITE-RESCUE] Candidate recorder could not start; keeping primary "
+            << original_call->get_short_name() << " call "
+            << original_call->get_call_num() << ".";
       }
     } else if (duplicate_grant) {
       std::string loghdr = log_header( call->get_short_name(), call->get_call_num(), call->get_talkgroup_display(), call->get_freq());
