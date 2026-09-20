@@ -1220,6 +1220,7 @@ bool retune_system_to_frequency(System *sys, double control_channel_freq, gr::to
                 BOOST_LOG_TRIVIAL(error)
                     << "\t - P25 selector has no input for Source "
                     << source->get_num();
+
                 source_found = false;
                 break;
               }
