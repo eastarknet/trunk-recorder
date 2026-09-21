@@ -2,6 +2,7 @@
 #include "golay2087.h"
 #include "hamming.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
