@@ -1,6 +1,8 @@
 Trunk Recorder ChangeLog
 ========================
 ### Unreleased
+* Add EastArkNet P25 multisite dead-primary rescue V1: after a silent-primary grace period, one duplicate-site P25 recorder may be started provisionally; the primary wins if it begins audio, the candidate is promoted if it proves audio first, and a silent candidate is abandoned after a bounded timeout.
+* Fix rescue lifecycle cleanup when normal call management removes the primary while a provisional candidate is pending; the orphaned candidate is now explicitly discarded instead of losing its provisional identity and becoming eligible to seed a nested rescue.
 * Add trunked DMR support (`"type": "dmr"`) for MOTOTRBO Capacity Plus, Capacity Max, Connect Plus and ETSI Tier III systems with a dedicated control channel; new per-slot `dmr_trunked_recorder` modelled on P25 Phase 2. LCN-to-frequency mapping can be provided explicitly via `lcnTable`, or as a `channels` candidate list that the decoder auto-claims as new LCNs appear.
 * Fix iqfile source ctor arg order in config.cc (center/rate/repeat were mis-ordered, leaving iqfile sources mis-configured)
 * Add optional `TR_IQ_FILE_THROTTLE_X` env var to play `iqfile` sources faster than wall-clock for offline analysis
