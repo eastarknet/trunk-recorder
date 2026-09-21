@@ -429,6 +429,7 @@ add_executable(dmr_embedded_lc_test
   lib/op25_repeater/lib/bptc19696.cc
   lib/op25_repeater/lib/trellis.cc)
 target_include_directories(dmr_embedded_lc_test PRIVATE lib/op25_repeater/lib)
+target_compile_definitions(dmr_embedded_lc_test PRIVATE EZPWD_NO_EXCEPTS)
 target_link_libraries(dmr_embedded_lc_test
   ${Boost_LIBRARIES}
   ${GNURADIO_PMT_LIBRARIES}
