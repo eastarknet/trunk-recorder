@@ -28,6 +28,36 @@ DMR support.
 - The existing upstream `plugins/stat_socket` directory is enabled by the
   top-level CMake build so its ABI matches the Trunk Recorder binary.
 
+
+## P25 multisite dead-primary rescue (Version 1)
+
+- P25 multisite duplicate handling now has a conservative dead-primary rescue
+  path. If the current primary has produced no audio after a 1000 ms grace
+  period and a duplicate grant arrives from another P25 site, Trunk Recorder
+  may start one provisional candidate while leaving the primary active.
+- If the primary begins writing audio, the candidate is discarded. If the
+  candidate produces audio while the primary remains silent, the candidate is
+  promoted and the primary is concluded as `SUPERSEDED`. If neither writes
+  audio before the 1500 ms candidate timeout, the candidate is discarded.
+- Provisional candidates are excluded from becoming primaries for nested
+  rescues. A production-discovered lifecycle edge case where the original
+  primary disappeared before the next rescue-management pass was fixed so the
+  still-recording provisional candidate is explicitly discarded before rescue
+  tracking is removed.
+- All rescue decision logs use the `[MULTISITE-RESCUE]` prefix.
+- Version 1 intentionally does not rank working sites by RSSI, decoder errors,
+  spikes, or other quality metrics. It is a binary dead-primary rescue only.
+- The corrected implementation was operationally validated on EastArkNet live
+  traffic on 2026-09-20/21. In the observed validation window, 14 rescue
+  attempts produced 8 promotions, 5 silent-candidate abandons, and 1
+  primary-disappeared cleanup. All three resolution paths were exercised.
+- EastArkNet removed the `Preferred NAC` column from its AWIN talkgroup CSV
+  before this validation so deployment does not force a static per-talkgroup
+  NAC preference. Core preferred-NAC/site support remains in Trunk Recorder.
+
+Detailed design, lifecycle, logging, and production-validation notes are in
+[`docs/notes/P25-MULTISITE-RESCUE.md`](docs/notes/P25-MULTISITE-RESCUE.md).
+
 ## DMR preservation
 
 The source-selection changes wrap, but do not replace, upstream DMR setup,
