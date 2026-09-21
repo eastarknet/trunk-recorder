@@ -838,17 +838,19 @@ dmr_slot::decode_embedded_lc() {
 
 	// Hamming (16,11,4) check each row except the last one
 	for (unsigned int a = 0; a < 112; a += 16) {
-		if (!CHamming::decode16114(data + a))
+		if (!CHamming::decode16114(data + a)) {
 			std::cerr << "EMB LC Hamming error" << std::endl;
 			return false;
+		}
 	}
 
 	// Check parity bits
 	for (unsigned int a = 0; a < 16; a++) {
 		bool parity = data[a + 0] ^ data[a + 16] ^ data[a + 32] ^ data[a + 48] ^ data[a + 64] ^ data[a + 80] ^ data[a + 96] ^ data[a + 112];
-		if (parity)
+		if (parity) {
 			std::cerr << "EMB LC parity error" << std::endl;
 			return false;
+		}
 	}
 
 	// Extract 72 bits of payload

@@ -78,6 +78,8 @@ public:
 	std::pair<bool,long> get_terminated();
 
 private:
+	friend class DmrEmbeddedLcTest;
+
 	uint8_t     d_slot[SLOT_SIZE];	// array of bits comprising the current slot
 	bit_vector  d_slot_type;
 	byte_vector d_emb;		// last received Embedded data
