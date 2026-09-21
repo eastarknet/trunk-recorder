@@ -421,22 +421,22 @@ add_executable(dmr_metadata_pending_test tests/dmr_metadata_pending_test.cc)
 target_include_directories(dmr_metadata_pending_test PRIVATE lib/op25_repeater/lib)
 add_test(NAME dmr_metadata_pending_test COMMAND dmr_metadata_pending_test)
 
-add_executable(dmr_embedded_lc_test tests/dmr_embedded_lc_test.cc)
+add_executable(dmr_embedded_lc_test
+  tests/dmr_embedded_lc_test.cc
+  lib/op25_repeater/lib/dmr_slot.cc
+  lib/op25_repeater/lib/hamming.cc
+  lib/op25_repeater/lib/golay2087.cc
+  lib/op25_repeater/lib/bptc19696.cc
+  lib/op25_repeater/lib/trellis.cc)
 target_include_directories(dmr_embedded_lc_test PRIVATE lib/op25_repeater/lib)
-target_link_libraries(dmr_embedded_lc_test gnuradio-op25_repeater
-  ${CMAKE_DL_LIBS} ssl crypto ${CURL_LIBRARIES} ${Boost_LIBRARIES}
-  ${GNURADIO_PMT_LIBRARIES} ${GNURADIO_RUNTIME_LIBRARIES}
-  ${GNURADIO_FILTER_LIBRARIES} ${GNURADIO_DIGITAL_LIBRARIES}
-  ${GNURADIO_ANALOG_LIBRARIES} ${GNURADIO_AUDIO_LIBRARIES}
-  ${GNURADIO_UHD_LIBRARIES} ${UHD_LIBRARIES}
-  ${GNURADIO_BLOCKS_LIBRARIES} ${GNURADIO_OSMOSDR_LIBRARIES})
+target_link_libraries(dmr_embedded_lc_test
+  ${Boost_LIBRARIES}
+  ${GNURADIO_PMT_LIBRARIES}
+  ${GNURADIO_RUNTIME_LIBRARIES})
 add_test(NAME dmr_embedded_lc_test COMMAND dmr_embedded_lc_test)
 if(NOT Gnuradio_VERSION VERSION_LESS "3.8")
   target_link_libraries(dmr_embedded_lc_test
-    gnuradio::gnuradio-analog
-    gnuradio::gnuradio-blocks
-    gnuradio::gnuradio-digital
-    gnuradio::gnuradio-filter
+    gnuradio::gnuradio-runtime
     gnuradio::gnuradio-pmt)
 endif()
 
