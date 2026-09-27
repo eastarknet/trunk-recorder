@@ -614,6 +614,15 @@ dmr_slot::decode_vlch(uint8_t* vlch) {
 
 	d_src_id = get_lc_srcaddr();
 	d_dst_id = get_lc_dstaddr();
+	if ((get_lc_svcopt() & 0x40) != 0) {
+		fprintf(stderr,
+			"%s [EAN-DMR-EMERGENCY-DIAG] type=VLC slot=%d cc=%x pf=%d flco=%02x fid=%02x svcopt=%02X dst=%06x src=%06x rs_errs=%d lc=%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+			logts.get(d_msgq_id), d_chan, get_slot_cc(), get_lc_pf(),
+			get_lc_flco(), get_lc_fid(), get_lc_svcopt(),
+			get_lc_dstaddr(), get_lc_srcaddr(), rs_errs,
+			d_lc[0], d_lc[1], d_lc[2], d_lc[3], d_lc[4],
+			d_lc[5], d_lc[6], d_lc[7], d_lc[8]);
+	}
 	if (d_debug >= 10) {
 		fprintf(stderr, "%s Slot(%d), CC(%x), VOICE LC PF(%d), FLCO(%02x), FID(%02x), SVCOPT(%02X), DSTADDR(%06x), SRCADDR(%06x), rs_errs=%d\n",  logts.get(d_msgq_id),	d_chan, get_slot_cc(), get_lc_pf(), get_lc_flco(), get_lc_fid(), get_lc_svcopt(), get_lc_dstaddr(), get_lc_srcaddr(), rs_errs);
 	}
@@ -652,6 +661,15 @@ dmr_slot::decode_tlc(uint8_t* tlc) {
 
 	d_src_id = get_lc_srcaddr();
 	d_dst_id = get_lc_dstaddr();
+	if ((get_lc_svcopt() & 0x40) != 0) {
+		fprintf(stderr,
+			"%s [EAN-DMR-EMERGENCY-DIAG] type=TLC slot=%d cc=%x pf=%d flco=%02x fid=%02x svcopt=%02X dst=%06x src=%06x rs_errs=%d lc=%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+			logts.get(d_msgq_id), d_chan, get_slot_cc(), get_lc_pf(),
+			get_lc_flco(), get_lc_fid(), get_lc_svcopt(),
+			get_lc_dstaddr(), get_lc_srcaddr(), rs_errs,
+			d_lc[0], d_lc[1], d_lc[2], d_lc[3], d_lc[4],
+			d_lc[5], d_lc[6], d_lc[7], d_lc[8]);
+	}
 	if (d_debug >= 10) {
 		fprintf(stderr, "%s Slot(%d), CC(%x), TERM LC PF(%d), FLCO(%02x), FID(%02x), SVCOPT(%02X), DSTADDR(%06x), SRCADDR(%06x), rs_errs=%d\n", logts.get(d_msgq_id), d_chan, get_slot_cc(), get_lc_pf(), get_lc_flco(), get_lc_fid(), get_lc_svcopt(), get_lc_dstaddr(), get_lc_srcaddr(), rs_errs);
 	}
@@ -879,6 +897,18 @@ dmr_slot::decode_embedded_lc() {
 
 	// Calculate LC CRC and compare with received value
 	uint16_t calc_crc = (d_lc[0] + d_lc[1] + d_lc[2] + d_lc[3] + d_lc[4] + d_lc[5] + d_lc[6] + d_lc[7] + d_lc[8]) % 31;
+	if ((get_lc_svcopt() & 0x40) != 0) {
+		fprintf(stderr,
+			"%s [EAN-DMR-EMERGENCY-DIAG] type=ELC slot=%d cc=%x pf=%d flco=%02x fid=%02x svcopt=%02X dst=%06x src=%06x rxd_crc=%u calc_crc=%u crc_match=%s lc=%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+			logts.get(d_msgq_id), d_chan, get_slot_cc(), get_lc_pf(),
+			get_lc_flco(), get_lc_fid(), get_lc_svcopt(),
+			get_lc_dstaddr(), get_lc_srcaddr(),
+			static_cast<unsigned int>(rxd_crc),
+			static_cast<unsigned int>(calc_crc),
+			(rxd_crc == calc_crc) ? "yes" : "no",
+			d_lc[0], d_lc[1], d_lc[2], d_lc[3], d_lc[4],
+			d_lc[5], d_lc[6], d_lc[7], d_lc[8]);
+	}
 #if _CRC_CHECK_
 	if (rxd_crc == calc_crc) {
 #else
